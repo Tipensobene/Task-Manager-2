@@ -1,0 +1,21 @@
+# Python cache 忽略python缓存
+__pycache__/
+*.pyc
+
+# Virtual environment
+.venv/
+venv/
+
+# Environment variables 忽略密钥
+.env
+
+# IDE 忽略PyCharm自己的工程配置
+.idea/
+
+# Logs 忽略程序运行产生的日志
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

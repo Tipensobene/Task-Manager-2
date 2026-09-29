@@ -29,16 +29,23 @@ class TaskManager:
         return None
 
     @log_operation("Added task")
-    def add_task(self, title: str) -> Task:
+    def add_task(self, title: str,priority:str="normal") -> Task:
 
         title = title.strip()
 
         if not title:
             raise ValueError("Task title cannot be empty")
 
+        priority = priority.strip().lower()
+
+        if not priority:
+            priority = "normal"
+        elif priority not in ["normal", "high", "low"]:
+            raise ValueError("优先级不合法，请输入 low / normal / high")
+
         new_id = self._generate_next_id()
 
-        new_task = Task(id=new_id, title=title)
+        new_task = Task(id=new_id, title=title, priority=priority)
         self.tasks.append(new_task)
 
         save_tasks(self.tasks)
@@ -116,3 +123,21 @@ class TaskManager:
                 "uncompleted_num": uncompleted_num,
                 "completed_num": completed_num
                 }
+
+    def search_by_priority(self,priority:str) -> list[Task]:
+
+
+        priority = priority.strip().lower()
+
+        if not priority:
+            raise ValueError("优先级不能为空")
+
+        elif priority not in ["normal", "high", "low"]:
+            raise ValueError("优先级不合法，请输入 low / normal / high")
+
+        result_list = []
+        for task in self.tasks:
+            if task.priority == priority:
+                result_list.append(task)
+
+        return result_list

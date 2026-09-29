@@ -60,25 +60,4 @@ def load_tasks() -> list[Task]:
     return tasks
 
 
-if __name__ == '__main__':
-    task1 = Task(
-        id=1,
-        title="学习 Git"
-    )
 
-    task2 = Task(
-        id=2,
-        title="学习 Python"
-    )
-
-    tasks_t = [task1, task2]
-
-    save_tasks(tasks_t)
-
-    print("测试load_tasks:")
-    print()
-    loaded_tasks = load_tasks()
-    print(loaded_tasks)
-
-    print(type(loaded_tasks))
-    # print(type(loaded_tasks[0]))

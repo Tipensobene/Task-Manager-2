@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+from utils import log_operation
 from models import Task
 from storage import save_tasks
 
@@ -27,6 +28,7 @@ class TaskManager:
 
         return None
 
+    @log_operation("Added task")
     def add_task(self, title: str) -> Task:
 
         title = title.strip()
@@ -41,11 +43,13 @@ class TaskManager:
 
         save_tasks(self.tasks)
 
+
         return new_task
 
     def list_tasks(self) -> list[Task]:
         return self.tasks.copy()
 
+    @log_operation("Completed tasks")
     def complete_task(self, task_id: int) -> Task:
 
         find_task = self._find_task_by_id(task_id)
@@ -58,8 +62,11 @@ class TaskManager:
 
         find_task.complete()
         save_tasks(self.tasks)
+
+
         return find_task
 
+    @log_operation("Deleted tasks")
     def delete_task(self, task_id: int) -> Task:
 
         find_task = self._find_task_by_id(task_id)
@@ -68,6 +75,7 @@ class TaskManager:
 
         self.tasks.remove(find_task)
         save_tasks(self.tasks)
+
         return find_task
 
     def search_task(self, keyword: str) -> list[Task]:

@@ -13,11 +13,22 @@ class TaskResponse(BaseModel):
     priority:str
 
 @app.get("/tasks",response_model=list[TaskResponse])
-def get_tasks():
+def get_tasks(priority:str|None=None):
     tasks = load_tasks()
     manager = TaskManager(tasks)
 
-    task_list=manager.list_tasks()
+    if priority is None:
+        task_list = manager.list_tasks()
+
+    else:
+        try:
+            task_list = manager.search_by_priority(priority)
+
+        except ValueError as error:
+            raise HTTPException(
+                status_code=400,
+                detail=str(error)
+            )
 
     result=[]
     for task in task_list:
@@ -104,6 +115,8 @@ def delete_task(task_id: int):
         )
 
     return deleted_task.to_dict()
+
+
 
 
 

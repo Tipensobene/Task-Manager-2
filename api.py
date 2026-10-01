@@ -27,7 +27,7 @@ def get_task_stats():
     return manager.get_statistics()
 
 @app.get("/tasks",response_model=list[TaskResponse])
-def get_tasks(priority:str|None=None,done:bool|None=None):
+def get_tasks(priority:str|None=None,done:bool|None=None,keyword:str|None=None):
     tasks = load_tasks()
     manager = TaskManager(tasks)
 
@@ -44,6 +44,27 @@ def get_tasks(priority:str|None=None,done:bool|None=None):
                 detail=str(error)
             )
 
+    match_ids = []
+    if keyword is not None:
+
+        try:
+            keyword_list=manager.search_task(keyword)
+
+            for task in keyword_list:
+                match_ids.append(task.id)
+
+            keyword_filtered_tasks=[]
+            for task in task_list:
+                if task.id in match_ids:
+                    keyword_filtered_tasks.append(task)
+
+            task_list=keyword_filtered_tasks
+
+        except ValueError as error:
+            raise HTTPException(
+                status_code=400,
+                detail=str(error)
+            )
 
     result=[]
 

@@ -5,7 +5,14 @@ from fastapi import HTTPException
 from pydantic import BaseModel,ConfigDict,Field
 app = FastAPI(title="Task Manager3.0")
 
-@app.get("/tasks")
+#响应模型
+class TaskResponse(BaseModel):
+    id:int
+    title:str
+    done:bool
+    priority:str
+
+@app.get("/tasks",response_model=list[TaskResponse])
 def get_tasks():
     tasks = load_tasks()
     manager = TaskManager(tasks)
@@ -18,7 +25,7 @@ def get_tasks():
 
     return result
 
-@app.get("/tasks/{task_id}")
+@app.get("/tasks/{task_id}",response_model=TaskResponse)
 def get_task(task_id: int):
 
     tasks = load_tasks()
@@ -41,7 +48,7 @@ class TaskCreate(BaseModel):
     title:str=Field(min_length=1,max_length=100)
     priority:str="normal"
 
-@app.post("/tasks",status_code=201)
+@app.post("/tasks",status_code=201,response_model=TaskResponse)
 def create_task(task: TaskCreate):
 
 
@@ -60,7 +67,7 @@ def create_task(task: TaskCreate):
 
     return new_task.to_dict()
 
-@app.patch("/tasks/{task_id}/complete")
+@app.patch("/tasks/{task_id}/complete",response_model=TaskResponse)
 def complete_task(task_id: int):
 
     tasks = load_tasks()
@@ -83,7 +90,7 @@ def complete_task(task_id: int):
 
     return completed_task.to_dict()
 
-@app.delete("/tasks/{task_id}")
+@app.delete("/tasks/{task_id}",response_model=TaskResponse)
 def delete_task(task_id: int):
     tasks = load_tasks()
     manager = TaskManager(tasks)
@@ -97,5 +104,7 @@ def delete_task(task_id: int):
         )
 
     return deleted_task.to_dict()
+
+
 
 

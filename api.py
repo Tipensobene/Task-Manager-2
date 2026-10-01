@@ -60,3 +60,42 @@ def create_task(task: TaskCreate):
 
     return new_task.to_dict()
 
+@app.patch("/tasks/{task_id}/complete")
+def complete_task(task_id: int):
+
+    tasks = load_tasks()
+    manager = TaskManager(tasks)
+
+    if manager.get_task(task_id) is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Task not found"
+        )
+
+    try:
+        completed_task = manager.complete_task(task_id)
+
+    except ValueError as error:
+        raise HTTPException(
+            status_code=400,
+            detail=str(error)
+        )
+
+    return completed_task.to_dict()
+
+@app.delete("/tasks/{task_id}")
+def delete_task(task_id: int):
+    tasks = load_tasks()
+    manager = TaskManager(tasks)
+
+    try:
+        deleted_task=manager.delete_task(task_id)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=404,
+            detail=str(error)
+        )
+
+    return deleted_task.to_dict()
+
+

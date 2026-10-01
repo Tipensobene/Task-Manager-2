@@ -13,7 +13,7 @@ class TaskResponse(BaseModel):
     priority:str
 
 @app.get("/tasks",response_model=list[TaskResponse])
-def get_tasks(priority:str|None=None):
+def get_tasks(priority:str|None=None,done:bool|None=None):
     tasks = load_tasks()
     manager = TaskManager(tasks)
 
@@ -30,9 +30,22 @@ def get_tasks(priority:str|None=None):
                 detail=str(error)
             )
 
+
     result=[]
+
+    if done is not None:
+        filtered_tasks=[]
+
+        for task in task_list:
+            if task.done==done:
+                filtered_tasks.append(task)
+
+        task_list=filtered_tasks
+
+
     for task in task_list:
         result.append(task.to_dict())
+
 
     return result
 

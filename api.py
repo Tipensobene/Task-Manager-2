@@ -12,6 +12,20 @@ class TaskResponse(BaseModel):
     done:bool
     priority:str
 
+
+class TaskStatsResponse(BaseModel):
+    total:int
+    completed_num:int
+    uncompleted_num:int
+
+
+@app.get("/tasks/stats",response_model=TaskStatsResponse)
+def get_task_stats():
+    tasks = load_tasks()
+    manager = TaskManager(tasks)
+
+    return manager.get_statistics()
+
 @app.get("/tasks",response_model=list[TaskResponse])
 def get_tasks(priority:str|None=None,done:bool|None=None):
     tasks = load_tasks()

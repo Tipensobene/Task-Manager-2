@@ -141,3 +141,6 @@ class TaskManager:
                 result_list.append(task)
 
         return result_list
+
+    def get_task(self, task_id: int) -> Task | None:
+        return self._find_task_by_id(task_id)

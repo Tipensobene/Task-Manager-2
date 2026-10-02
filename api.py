@@ -1,7 +1,7 @@
-from fastapi import FastAPI
+from fastapi import FastAPI,HTTPException,Request
+from fastapi.responses import JSONResponse
 from service import TaskManager
-from storage import load_tasks
-from fastapi import HTTPException
+from storage import load_tasks,StorageError
 from pydantic import BaseModel,ConfigDict,Field
 app = FastAPI(title="Task Manager3.0")
 
@@ -208,7 +208,15 @@ def update_task(task_id: int,task_update: TaskUpdate):
 
     return res_data.to_dict()
 
-
+@app.exception_handler(StorageError)
+def handle_storage_error(
+        request: Request,
+        error: StorageError
+):
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(error)}
+    )
 
 
 

@@ -7,26 +7,35 @@ BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
 DATA_FILE = DATA_DIR/"tasks.json"
 
+class StorageError(Exception):
+    pass
+
+
+
 def save_tasks(tasks:list[Task]) -> None:
+    try:
 
-    DATA_DIR.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    tasks_dict=[]
-    for task in tasks:
-
-        task_temp=task.to_dict()
-        tasks_dict.append(task_temp)
-
-    with open(DATA_FILE,"w",encoding="utf-8") as f:
-        json.dump(
-            tasks_dict,
-            f,
-            ensure_ascii=False,
-            indent=4
+        DATA_DIR.mkdir(
+            parents=True,
+            exist_ok=True
         )
+
+        tasks_dict=[]
+        for task in tasks:
+
+            task_temp=task.to_dict()
+            tasks_dict.append(task_temp)
+
+        with open(DATA_FILE,"w",encoding="utf-8") as f:
+            json.dump(
+                tasks_dict,
+                f,
+                ensure_ascii=False,
+                indent=4
+            )
+
+    except OSError as error:
+        raise StorageError("保存任务文件失败") from error
 
 def load_tasks() -> list[Task]:
 
@@ -48,16 +57,18 @@ def load_tasks() -> list[Task]:
         print("未找到文件")
         return []
 
-    except json.JSONDecodeError:
-        print("文件格式错误,将使用空文件")
-        return []
+    except json.JSONDecodeError as error:
+
+        raise StorageError("任务数据文件格式错误") from error
+
+
 
     except OSError as error:
-        print("读取文件失败",error)
-        return []
 
+        raise StorageError("读取任务文件失败") from error
 
     return tasks
+
 
 
 

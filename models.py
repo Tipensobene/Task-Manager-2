@@ -1,4 +1,4 @@
-from dataclasses import dataclass,asdict
+from dataclasses import dataclass,asdict,field
 
 
 @dataclass
@@ -7,6 +7,7 @@ class Task:
     title:str
     done:bool=False
     priority: str="normal"
+    tags:list[str]=field(default_factory=list)
 
 
     def complete(self):
@@ -26,7 +27,8 @@ class Task:
             id=data["id"],
             title=data["title"],
             done=data.get("done", False),
-            priority=data.get("priority", "normal")
+            priority=data.get("priority", "normal"),
+            tags=data.get("tags", [])
         )
 
 

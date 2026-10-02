@@ -14,6 +14,7 @@ class TaskCreate(BaseModel):
 
     title:str=Field(min_length=1,max_length=100)
     priority:str="normal"
+    tags:list[str]=Field(default_factory=list)
 
 #局部更新模型
 class TaskUpdate(BaseModel):
@@ -32,6 +33,7 @@ class TaskResponse(BaseModel):
     title:str
     done:bool
     priority:str
+    tags:list[str]
 
 
 class TaskStatsResponse(BaseModel):
@@ -136,7 +138,7 @@ def create_task(task: TaskCreate):
     manager = TaskManager(tasks)
 
     try:
-        new_task=manager.add_task(task.title,task.priority)
+        new_task=manager.add_task(task.title,task.priority,task.tags)
 
     except ValueError as error:
         raise HTTPException(

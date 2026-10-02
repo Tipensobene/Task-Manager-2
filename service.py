@@ -28,7 +28,7 @@ class TaskManager:
         return None
 
     @log_operation("Added task")
-    def add_task(self, title: str, priority: str = "normal") -> Task:
+    def add_task(self, title: str, priority: str = "normal",tags:list[str]|None=None) -> Task:
 
         title = title.strip()
 
@@ -42,9 +42,22 @@ class TaskManager:
         elif priority not in ["normal", "high", "low"]:
             raise ValueError("优先级不合法，请输入 low / normal / high")
 
+        if tags is None:
+            tags=[]
+
+        cleaned_tags=[]
+
+        for tag in tags:
+            cleaned_tag=tag.strip().lower()
+
+            if not cleaned_tag:
+                raise ValueError("tag cannot be empty")
+
+            cleaned_tags.append(cleaned_tag)
+
         new_id = self._generate_next_id()
 
-        new_task = Task(id=new_id, title=title, priority=priority)
+        new_task = Task(id=new_id, title=title, priority=priority,tags=cleaned_tags)
         self.tasks.append(new_task)
 
         save_tasks(self.tasks)

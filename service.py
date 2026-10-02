@@ -29,7 +29,7 @@ class TaskManager:
         return None
 
     @log_operation("Added task")
-    def add_task(self, title: str,priority:str="normal") -> Task:
+    def add_task(self, title: str, priority: str = "normal") -> Task:
 
         title = title.strip()
 
@@ -50,7 +50,6 @@ class TaskManager:
 
         save_tasks(self.tasks)
 
-
         return new_task
 
     def list_tasks(self) -> list[Task]:
@@ -69,7 +68,6 @@ class TaskManager:
 
         find_task.complete()
         save_tasks(self.tasks)
-
 
         return find_task
 
@@ -124,8 +122,7 @@ class TaskManager:
                 "completed_num": completed_num
                 }
 
-    def search_by_priority(self,priority:str) -> list[Task]:
-
+    def search_by_priority(self, priority: str) -> list[Task]:
 
         priority = priority.strip().lower()
 
@@ -144,3 +141,43 @@ class TaskManager:
 
     def get_task(self, task_id: int) -> Task | None:
         return self._find_task_by_id(task_id)
+
+    @log_operation("Updated tasks")
+    def update_task(
+            self,
+            task_id: int,
+            title: str | None = None,
+            priority: str | None = None
+    ) -> Task:
+
+        task = self._find_task_by_id(task_id)
+
+        # 判断是否能找到当前任务
+        if task is None:
+            raise ValueError("task cannot be found")
+
+        # 判断调用者是否提供了更新内容
+        if title is None and priority is None:
+            raise ValueError("no update context")
+
+        # 统一验证是否合法
+        if title is not None:
+            title = title.strip()
+            if not title:
+                raise ValueError("title cannot be empty")
+
+        if priority is not None:
+            priority = priority.strip().lower()
+            if priority not in ["normal", "high", "low"]:
+                raise ValueError("priority is illegal")
+
+        # 统一修改
+        if title is not None:
+            task.rename(title)
+
+        if priority is not None:
+            task.priority = priority
+
+        save_tasks(self.tasks)
+
+        return task

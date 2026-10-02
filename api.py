@@ -5,6 +5,19 @@ from fastapi import HTTPException
 from pydantic import BaseModel,ConfigDict,Field
 app = FastAPI(title="Task Manager3.0")
 
+#局部更新模型
+class TaskUpdate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    title:str|None=Field(
+        default=None,
+        min_length=1,
+        max_length=100
+    )
+    priority:str|None=None
+
+
+
 #响应模型
 class TaskResponse(BaseModel):
     id:int
@@ -87,7 +100,7 @@ def get_tasks(priority:str|None=None,done:bool|None=None,keyword:str|None=None):
 @app.get("/tasks/{task_id}",response_model=TaskResponse)
 def get_task(task_id: int):
 
-    tasks = load_tasks()
+    tasks =load_tasks()
     manager = TaskManager(tasks)
 
 
@@ -163,6 +176,37 @@ def delete_task(task_id: int):
         )
 
     return deleted_task.to_dict()
+
+@app.patch("/tasks/{task_id}",response_model=TaskResponse)
+def update_task(task_id: int,task_update: TaskUpdate):
+    tasks = load_tasks()
+    manager = TaskManager(tasks)
+
+    task=manager.get_task(task_id)
+    if task is None:
+        raise HTTPException(
+            status_code=404
+        )
+
+    update_data=task_update.model_dump(exclude_unset=True)
+
+    for field_name, value in update_data.items():
+        if value is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{field_name} cannot be null"
+            )
+
+    try:
+        res_data=manager.update_task(task_id,**update_data)
+
+    except ValueError as error:
+        raise HTTPException(
+            status_code=400,
+            detail=str(error)
+        )
+
+    return res_data.to_dict()
 
 
 

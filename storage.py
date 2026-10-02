@@ -6,6 +6,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
 DATA_FILE = DATA_DIR/"tasks.json"
+TEMP_DATA_FILE=DATA_DIR/"tasks_tmp.json"
 
 class StorageError(Exception):
     pass
@@ -26,13 +27,15 @@ def save_tasks(tasks:list[Task]) -> None:
             task_temp=task.to_dict()
             tasks_dict.append(task_temp)
 
-        with open(DATA_FILE,"w",encoding="utf-8") as f:
+        with open(TEMP_DATA_FILE,"w",encoding="utf-8") as f:
             json.dump(
                 tasks_dict,
                 f,
                 ensure_ascii=False,
                 indent=4
             )
+
+        TEMP_DATA_FILE.replace(DATA_FILE)
 
     except OSError as error:
         raise StorageError("保存任务文件失败") from error

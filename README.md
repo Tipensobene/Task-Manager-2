@@ -1,180 +1,331 @@
-# Task Manager 2.0
+# Task Manager 3.0
 
 ## 项目简介
 
-Task Manager 2.0 是一个使用 Python 开发的命令行（CLI）任务管理系统，支持任务的增删改查、优先级管理、搜索、统计，并通过 JSON 文件实现数据持久化、通过 logging 记录关键操作日志。
+Task Manager 3.0 是一个使用 Python 和 FastAPI 开发的任务管理 Web API。项目从 Task Manager 2.0 命令行程序升级而来，在保留 CLI 的同时，通过 HTTP 和 JSON 向浏览器、Swagger UI、Python 程序等客户端提供任务管理能力。
 
-本项目是对之前完成的 Task Manager 的**重新构建（Rebuilding）**：在功能不变的前提下，把原来集中的代码拆分为**模块化、分层**的结构（数据模型 / 业务逻辑 / 存储 / 工具），以提高代码的可维护性与可扩展性。
+项目继续复用原有的 `TaskManager` 业务逻辑，并使用 JSON 文件保存任务。当前阶段的重点是学习 HTTP、FastAPI、Pydantic、API 分层、异常处理和客户端调用。
 
-本次重构主要训练以下能力：
+```text
+浏览器 / Swagger UI / Python requests
+                  ↓ HTTP
+              FastAPI
+                  ↓
+             TaskManager
+                  ↓
+          data/tasks.json
+```
 
-- Python 模块化开发与分层设计（models / service / storage / utils）
-- 面向对象编程（dataclass 数据类）
-- JSON 数据持久化（对象与 JSON 之间的相互转换）
-- 异常处理与输入校验
-- logging 日志记录与装饰器（Decorator）的使用
-- 类型注解（Type Hints）
-- 旧数据兼容（字段缺失时用默认值兜底，不破坏已有数据）
-- Git 分支开发流程（feature branch → commit → merge）
+## 主要功能
 
-## 功能
+- 创建、查看、更新、完成和删除任务；
+- 按优先级、完成状态和标题关键词过滤任务；
+- 查看任务统计信息；
+- 使用 Pydantic 校验请求数据和响应数据；
+- 使用正确的 HTTP 状态码返回成功或错误结果；
+- 统一处理 JSON 文件读写异常；
+- 使用临时文件降低覆盖写入过程中损坏原数据的风险；
+- 保留 Task Manager 2.0 命令行入口；
+- 提供基于 `requests` 的 Python 客户端示例。
 
-目前已实现：
+## 技术栈
 
-| 功能 | 说明 |
-| ---- | ---- |
-| 添加任务 | 输入任务名称与优先级，自动分配 ID；空名称会被拒绝 |
-| 任务优先级 | 支持 low / normal / high 三级；回车默认 normal，输入不区分大小写（如 HIGH → high），非法值会提示并重新输入 |
-| 查看任务 | 按 ID、状态、优先级、名称的表格形式列出所有任务 |
-| 按优先级查看任务 | 输入优先级，只列出该优先级的任务 |
-| 完成任务 | 按 ID 将任务标记为完成；已完成的会提示错误 |
-| 删除任务 | 按 ID 删除任务；不存在的 ID 会提示错误 |
-| 搜索任务 | 按关键词模糊匹配任务名称（不区分大小写） |
-| 查看未完成任务 | 只列出尚未完成的任务 |
-| 统计信息 | 显示总任务数、已完成数、未完成数 |
-| JSON 持久化 | 任务数据自动保存到 `data/tasks.json`，重启后不丢失 |
-| 输入校验 | ID 必须为合法整数，非法输入会提示并允许重新输入 |
-| Logging | 添加、完成、删除操作自动写入日志文件 |
+| 技术 | 用途 |
+| --- | --- |
+| Python 3.10+ | 项目开发语言 |
+| FastAPI | 定义 Web API、路由和异常处理器 |
+| Uvicorn | 运行 ASGI Web 服务器 |
+| Pydantic | 请求和响应数据校验 |
+| requests | Python HTTP 客户端示例 |
+| dataclass | 定义内部 `Task` 和 `TaskManager` 模型 |
+| JSON | 任务数据持久化 |
+| pathlib | 管理数据文件与日志路径 |
+| logging | 记录任务操作日志 |
 
 ## 项目结构
 
-```
+```text
 Task_Managers_2/
-├── main.py           # 程序入口：CLI 菜单循环，负责与用户交互并展示结果
-├── models.py         # 数据模型：Task 数据类及其与字典互转的方法
-├── service.py        # 业务逻辑：TaskManager 类，实现任务的增删改查、优先级筛选、搜索、统计
-├── storage.py        # 持久化：任务的保存（save）与加载（load），路径管理
-├── utils.py          # 工具：logging 配置、整数输入校验、日志装饰器
-├── data/             # 数据目录：存放 tasks.json（首次运行自动创建，已加入 .gitignore）
-├── logs/             # 日志目录：存放 tasks_manager.log（自动创建，已加入 .gitignore）
-├── .gitignore        # 忽略缓存、虚拟环境、IDE 配置、日志与数据文件
+├── api.py            # FastAPI 应用入口，注册 Router 和全局异常处理器
+├── task_routes.py    # 任务路由、请求模型和响应模型
+├── client_demo.py    # 使用 requests 调用 API 的客户端示例
+├── main.py           # Task Manager 2.0 命令行入口
+├── models.py         # 内部 Task 数据模型
+├── service.py        # TaskManager 业务逻辑
+├── storage.py        # JSON 加载、保存和存储异常
+├── utils.py          # 日志配置、输入工具和日志装饰器
+├── data/             # 任务数据目录
+├── logs/             # 日志目录
+├── AGENTS.md         # 项目学习路线和协作规则
+├── .gitignore
 └── README.md
 ```
 
-各模块职责：
+主要调用方向：
 
-- **main.py**：唯一与用户交互的地方。显示菜单、读取用户输入、调用 service 层、打印结果与错误信息。
-- **models.py**：定义 `Task` 数据类（`id`、`title`、`done`、`priority`），并提供 `complete()`、`to_dict()`、`from_dict()` 等方法；`from_dict()` 对缺失字段用 `.get()` 提供默认值（`done=False`、`priority="normal"`），保证旧版本数据可以直接加载。
-- **service.py**：核心业务逻辑。`TaskManager` 类负责所有任务操作，并在增删改后自动调用 storage 保存；`add_task()` 校验并规范化优先级（去空格、转小写、空值默认为 normal），`search_by_priority()` 按优先级筛选任务。
-- **storage.py**：负责把 `Task` 对象列表写入 `data/tasks.json` 或从中读回，处理文件不存在、格式错误等异常。
-- **utils.py**：集中配置 logging；提供 `get_valid_int()` 做输入校验、`log_operation()` 装饰器统一记录日志。
-
-## 如何运行
-
-需要 Python 3.10+（代码使用了 `match-case` 与 `list[Task]`、`Task | None` 等新语法）。
-
-```bash
-python main.py
+```text
+api.py
+  ↓
+task_routes.py
+  ↓
+service.py
+  ↓
+storage.py
 ```
 
-启动后按菜单输入数字序号即可操作：
+- `api.py` 创建 FastAPI 应用，注册任务 Router 和全局存储异常处理器。
+- `task_routes.py` 负责 HTTP 请求与响应，并把业务操作交给 `TaskManager`。
+- `service.py` 负责创建、查询、更新、删除、搜索和统计等业务逻辑。
+- `storage.py` 负责在 `Task` 对象与 JSON 文件之间转换数据。
+- `models.py` 定义内部任务对象，不依赖 FastAPI。
 
-```
-============================
-      Task Manager 2.0
-============================
+## 安装依赖
 
-1. 添加任务
-2. 查看任务
-3. 完成任务
-4. 删除任务
-5. 搜索任务
-6. 查看未完成任务
-7. 查看统计信息
-8. 按优先级查看任务
-0. 退出
+建议先创建并激活虚拟环境，然后安装当前版本需要的依赖：
+
+```powershell
+python -m pip install fastapi uvicorn requests
 ```
 
-添加任务时，会依次提示输入任务名称与优先级：
+## 运行 Web API
 
+在项目根目录执行：
+
+```powershell
+python -m uvicorn api:app --reload
 ```
-请输入名称：
-请输入任务优先级[low/normal/high]（回车默认 normal）：
+
+命令含义：
+
+- `api` 对应 `api.py`；
+- `app` 对应文件中的 `app = FastAPI(...)`；
+- `--reload` 在开发期间检测代码变化并自动重启服务。
+
+启动后可以访问：
+
+- API 基础地址：`http://127.0.0.1:8000`
+- Swagger UI：`http://127.0.0.1:8000/docs`
+- OpenAPI 文档：`http://127.0.0.1:8000/openapi.json`
+
+## API 接口
+
+| HTTP Method | 路径 | 作用 | 成功状态码 |
+| --- | --- | --- | --- |
+| `GET` | `/tasks` | 查看、搜索或过滤任务 | `200` |
+| `GET` | `/tasks/stats` | 查看任务统计 | `200` |
+| `GET` | `/tasks/{task_id}` | 查看单个任务 | `200` |
+| `POST` | `/tasks` | 创建任务 | `201` |
+| `PATCH` | `/tasks/{task_id}` | 部分更新任务 | `200` |
+| `PATCH` | `/tasks/{task_id}/complete` | 将任务标记为完成 | `200` |
+| `DELETE` | `/tasks/{task_id}` | 删除并返回任务 | `200` |
+
+### 查看和过滤任务
+
+```http
+GET /tasks
 ```
 
-优先级输入规则：
+支持以下可选查询参数：
 
-- 直接回车 → 默认为 `normal`
-- `low` / `normal` / `high`（不区分大小写，如 `HIGH` 会保存为 `high`）
-- 其他输入 → 提示 `优先级不合法，请输入 low / normal / high`，任务不会被添加
+| 参数 | 类型 | 示例 | 作用 |
+| --- | --- | --- | --- |
+| `priority` | string | `high` | 按 `low`、`normal` 或 `high` 过滤 |
+| `done` | boolean | `false` | 按完成状态过滤 |
+| `keyword` | string | `python` | 按标题关键词搜索 |
 
-## 数据存储
+多个条件可以组合使用：
 
-任务数据保存在 `data/tasks.json`，该文件（及目录）在首次写入时自动创建。
+```http
+GET /tasks?priority=high&done=false&keyword=python
+```
 
-- **写入（Task → dict → JSON）**：保存时先通过 `Task.to_dict()`（基于 `dataclasses.asdict`）把每个 `Task` 对象转换为字典，再用 `json.dump` 写入文件（`ensure_ascii=False` 保证中文可读，`indent=4` 便于阅读）：
+响应示例：
 
 ```json
 [
     {
         "id": 1,
-        "title": "学习 Git",
+        "title": "学习 FastAPI",
         "done": false,
-        "priority": "normal"
-    },
-    {
-        "id": 2,
-        "title": "学习 Python",
-        "done": true,
         "priority": "high"
     }
 ]
 ```
 
-- **读取（JSON → dict → Task）**：加载时先用 `json.load` 把文件解析为字典列表，再通过 `Task.from_dict()` 将每个字典还原为 `Task` 对象。
+### 查看任务统计
 
-读取过程中对 `FileNotFoundError`、`json.JSONDecodeError`、`OSError` 分别做了处理，文件缺失或损坏时程序不会崩溃，而是以空列表启动。
-
-**旧数据兼容**：早期版本保存的 `tasks.json` 中没有 `priority`（甚至 `done`）字段，`Task.from_dict()` 使用 `data.get("priority", "normal")` 等默认值兜底，旧文件可以正常加载，缺失优先级的任务会显示为 `normal`。
-
-## 日志
-
-运行日志记录在 `logs/tasks_manager.log`，格式为 `时间 级别 消息`，由 `utils.py` 统一配置。
-
-通过 `@log_operation(...)` 装饰器自动记录以下操作：
-
-- 添加任务
-- 完成任务
-- 删除任务
-
-示例：
-
-```
-2026-09-29 14:44:40 INFO Added task: 马上结束了！
-2026-09-29 14:46:15 INFO Completed tasks: 学无止境啊
-2026-09-29 14:46:23 INFO Deleted tasks: 马上结束了！
+```http
+GET /tasks/stats
 ```
 
-## 技术点
+响应示例：
 
-| 技术 | 应用位置 |
-| ---- | ---- |
-| Python | 整体实现，使用 `match-case` 等新语法（3.10+） |
-| dataclass | `Task`、`TaskManager` 数据类；`Task` 含 `priority` 字段（默认 `normal`） |
-| JSON | 任务数据的持久化与恢复 |
-| pathlib | 用 `Path` 管理数据与日志文件的路径 |
-| 异常处理 | 空标题 / 非法 ID / 非法优先级 / 文件缺失与损坏等场景 |
-| 旧数据兼容 | `Task.from_dict()` 用 `.get()` 为缺失字段提供默认值，旧 JSON 直接可加载 |
-| 类型注解 | 函数参数与返回值标注（如 `list[Task]`、`Task \| None`） |
-| logging | 关键操作日志记录 |
-| 装饰器 | `log_operation` 装饰器为增删改操作统一附加日志 |
-| Git | 分支开发流程与提交历史管理 |
+```json
+{
+    "total": 3,
+    "completed_num": 1,
+    "uncompleted_num": 2
+}
+```
 
-## Git 开发方式
+### 查看单个任务
 
-本项目采用分支开发流程（feature branch → commit → merge）：
+```http
+GET /tasks/1
+```
 
-- **main**：稳定主线，只保留可运行、已验证的版本。
-- **feature/task-service**：业务逻辑开发分支（数据模型、JSON 存储、任务服务）。
-- **feature/cli**：命令行界面开发分支（菜单、交互与展示）。
-- **feature/task-priority**：任务优先级功能开发分支（`priority` 字段、优先级输入校验、按优先级筛选、旧数据兼容），当前开发所在分支。
+任务不存在时返回 `404 Not Found`。
 
-流程说明：
+### 创建任务
 
-1. 从 `main` 创建 `feature/*` 分支；
-2. 在分支上按模块小步提交（如 `feat: add task model` → `feat: add json task storage` → `feat: add task management service`）；
-3. 功能完成并验证后合并回 `main`。
+```http
+POST /tasks
+Content-Type: application/json
+```
 
-## 后续计划
+请求体：
 
-**Task Manager 3.0**：将现有命令行程序升级为 FastAPI REST API，把 `TaskManager` 业务逻辑暴露为 HTTP 接口（如 `POST /tasks`、`GET /tasks`、`PUT /tasks/{id}`、`DELETE /tasks/{id}`），供前端或其他客户端调用。
+```json
+{
+    "title": "学习创建任务接口",
+    "priority": "high"
+}
+```
+
+- `title` 必填，清理首尾空白后长度必须为 1～100；
+- `priority` 可省略，默认值为 `normal`；
+- `id` 由服务器生成；
+- `done` 由服务器设置为 `false`。
+
+成功时返回 `201 Created` 和新任务：
+
+```json
+{
+    "id": 2,
+    "title": "学习创建任务接口",
+    "done": false,
+    "priority": "high"
+}
+```
+
+### 部分更新任务
+
+```http
+PATCH /tasks/2
+Content-Type: application/json
+```
+
+请求体可以只包含需要修改的字段：
+
+```json
+{
+    "title": "复习 FastAPI",
+    "priority": "normal"
+}
+```
+
+当前支持更新 `title` 和 `priority`。显式传入 `null` 会返回 `400 Bad Request`。
+
+### 完成任务
+
+```http
+PATCH /tasks/2/complete
+```
+
+成功后任务的 `done` 为 `true`。重复完成已经完成的任务会返回 `400 Bad Request`。
+
+### 删除任务
+
+```http
+DELETE /tasks/2
+```
+
+成功时返回被删除的任务；任务不存在时返回 `404 Not Found`。
+
+## 状态码与错误响应
+
+| 状态码 | 含义 | 当前项目中的示例 |
+| --- | --- | --- |
+| `200 OK` | 请求成功 | 查询、更新或删除成功 |
+| `201 Created` | 资源创建成功 | 创建任务成功 |
+| `400 Bad Request` | 业务输入不合法 | 非法优先级、重复完成任务、更新字段为 `null` |
+| `404 Not Found` | 资源不存在 | 查询、更新或删除不存在的任务 |
+| `422 Unprocessable Entity` | 请求没有通过模型校验 | 缺少标题、标题过长、路径 ID 不是整数 |
+| `500 Internal Server Error` | 服务器内部处理失败 | JSON 文件读取、解析或保存失败 |
+
+错误响应示例：
+
+```json
+{
+    "detail": "Task not found"
+}
+```
+
+## Python 客户端示例
+
+确保 API 服务器已经运行，然后执行：
+
+```powershell
+python client_demo.py
+```
+
+`client_demo.py` 使用 `requests` 发送 HTTP 请求，演示 Python 客户端如何获取任务统计数据并处理连接错误。
+
+## 运行命令行版本
+
+原有的 Task Manager 2.0 CLI 仍然可以运行：
+
+```powershell
+python main.py
+```
+
+CLI 与 Web API 复用相同的业务模型和 JSON 数据文件。
+
+## 数据存储
+
+任务保存在 `data/tasks.json`，每个任务包含：
+
+```json
+{
+    "id": 1,
+    "title": "学习 FastAPI",
+    "done": false,
+    "priority": "high"
+}
+```
+
+保存时会先把完整数据写入临时文件，写入成功后再替换正式的 `tasks.json`。这样可以降低直接使用 `w` 模式覆盖正式文件时，写入中途失败造成原数据损坏的风险。
+
+当前存储行为：
+
+- 数据文件不存在时返回空任务列表；
+- JSON 格式损坏时抛出 `StorageError`；
+- 读取或保存发生其他 `OSError` 时抛出 `StorageError`；
+- FastAPI 全局异常处理器把未处理的 `StorageError` 转换为 `500` JSON 响应。
+
+当前仍使用 JSON 文件，不处理多个请求同时写入造成的竞争问题。数据库和并发持久化将在后续阶段学习。
+
+## 任务 ID
+
+任务 ID 由服务器生成：
+
+- 没有任务时从 `1` 开始；
+- 有任务时使用当前最大 ID 加 `1`；
+- 删除中间位置的任务后不会填补该空缺；如果删除的是当前最大 ID，下一次创建任务仍可能复用这个 ID。
+
+ID 表示任务身份，不是任务在 Python 列表中的位置。
+
+## 当前学习阶段
+
+Task Manager 3.0 用于学习从命令行程序迁移到 Web API 的过程，目前已经完成：
+
+- FastAPI 和 Uvicorn 基础；
+- HTTP 路由与状态码；
+- Pydantic 请求和响应模型；
+- 任务 CRUD；
+- 搜索、过滤和统计；
+- HTTP 异常与存储异常处理；
+- `APIRouter` 路由拆分；
+- Python HTTP 客户端示例。
+
+后续将进行完整接口验收和 Task Tag 独立 Rebuilding。数据库、SQLAlchemy、Docker、LLM、RAG 和 Agent 等内容不属于当前版本范围。

@@ -11,12 +11,11 @@ class TaskManager:
 
     def _generate_next_id(self) -> int:
 
-        used_ids = {task.id for task in self.tasks}
+        if len(self.tasks) == 0:
+            return 1
 
-        next_id = 1
-
-        while next_id in used_ids:
-            next_id += 1
+        task_ids = [task.id for task in self.tasks]
+        next_id = max(task_ids) + 1
 
         return next_id
 

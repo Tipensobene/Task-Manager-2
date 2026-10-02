@@ -1,9 +1,16 @@
-from fastapi import FastAPI,HTTPException,Request
+from fastapi import FastAPI,HTTPException,Request,APIRouter
 from fastapi.responses import JSONResponse
 from service import TaskManager
 from storage import load_tasks,StorageError
 from pydantic import BaseModel,ConfigDict,Field
 app = FastAPI(title="Task Manager3.0")
+
+#创建任务路由器
+task_router=APIRouter(
+    prefix="/tasks",
+    tags=["tasks"]
+)
+
 
 #局部更新模型
 class TaskUpdate(BaseModel):
@@ -32,14 +39,14 @@ class TaskStatsResponse(BaseModel):
     uncompleted_num:int
 
 
-@app.get("/tasks/stats",response_model=TaskStatsResponse)
+@task_router.get("/stats",response_model=TaskStatsResponse)
 def get_task_stats():
     tasks = load_tasks()
     manager = TaskManager(tasks)
 
     return manager.get_statistics()
 
-@app.get("/tasks",response_model=list[TaskResponse])
+@task_router.get("",response_model=list[TaskResponse])
 def get_tasks(priority:str|None=None,done:bool|None=None,keyword:str|None=None):
     tasks = load_tasks()
     manager = TaskManager(tasks)
@@ -97,7 +104,7 @@ def get_tasks(priority:str|None=None,done:bool|None=None,keyword:str|None=None):
 
     return result
 
-@app.get("/tasks/{task_id}",response_model=TaskResponse)
+@task_router.get("/{task_id}",response_model=TaskResponse)
 def get_task(task_id: int):
 
     tasks =load_tasks()
@@ -120,7 +127,11 @@ class TaskCreate(BaseModel):
     title:str=Field(min_length=1,max_length=100)
     priority:str="normal"
 
-@app.post("/tasks",status_code=201,response_model=TaskResponse)
+@task_router.post(
+    "",
+    status_code=201,
+    response_model=TaskResponse
+)
 def create_task(task: TaskCreate):
 
 
@@ -139,7 +150,7 @@ def create_task(task: TaskCreate):
 
     return new_task.to_dict()
 
-@app.patch("/tasks/{task_id}/complete",response_model=TaskResponse)
+@task_router.patch("/{task_id}/complete",response_model=TaskResponse)
 def complete_task(task_id: int):
 
     tasks = load_tasks()
@@ -162,7 +173,7 @@ def complete_task(task_id: int):
 
     return completed_task.to_dict()
 
-@app.delete("/tasks/{task_id}",response_model=TaskResponse)
+@task_router.delete("/{task_id}",response_model=TaskResponse)
 def delete_task(task_id: int):
     tasks = load_tasks()
     manager = TaskManager(tasks)
@@ -177,7 +188,7 @@ def delete_task(task_id: int):
 
     return deleted_task.to_dict()
 
-@app.patch("/tasks/{task_id}",response_model=TaskResponse)
+@task_router.patch("/{task_id}",response_model=TaskResponse)
 def update_task(task_id: int,task_update: TaskUpdate):
     tasks = load_tasks()
     manager = TaskManager(tasks)
@@ -218,6 +229,6 @@ def handle_storage_error(
         content={"detail": str(error)}
     )
 
-
+app.include_router(task_router)
 
 

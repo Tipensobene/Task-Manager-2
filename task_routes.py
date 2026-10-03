@@ -26,6 +26,7 @@ class TaskUpdate(BaseModel):
         max_length=100
     )
     priority:str|None=None
+    tags:list[str]|None=None
 
 #响应模型
 class TaskResponse(BaseModel):
@@ -198,6 +199,7 @@ def update_task(task_id: int,task_update: TaskUpdate):
             status_code=404
         )
 
+    #未显式提供改动字段直接过滤 不显示在update_data中
     update_data=task_update.model_dump(exclude_unset=True)
 
     for field_name, value in update_data.items():

@@ -159,7 +159,8 @@ class TaskManager:
             self,
             task_id: int,
             title: str | None = None,
-            priority: str | None = None
+            priority: str | None = None,
+            tags:list[str] | None = None
     ) -> Task:
 
         task = self._find_task_by_id(task_id)
@@ -169,7 +170,7 @@ class TaskManager:
             raise ValueError("task cannot be found")
 
         # 判断调用者是否提供了更新内容
-        if title is None and priority is None:
+        if title is None and priority is None and tags is None:
             raise ValueError("no update context")
 
         # 统一验证是否合法
@@ -183,12 +184,34 @@ class TaskManager:
             if priority not in ["normal", "high", "low"]:
                 raise ValueError("priority is illegal")
 
+
+        cleaned_tags:list[str]=[]
+        if tags is not None:
+            cleaned_tags=[]
+
+            for tag in tags:
+                cleaned_tag=tag.strip().lower()
+
+                if not cleaned_tag:
+                    raise ValueError("tag cannot be empty")
+
+                cleaned_tags.append(cleaned_tag)
+            # for tag in tags:
+            #     tag = tag.strip().lower()
+            #
+            # if not tags:
+            #     raise ValueError("tags cannot be empty")
+
+
         # 统一修改
         if title is not None:
             task.rename(title)
 
         if priority is not None:
             task.priority = priority
+
+        if tags is not None:
+            task.tags = cleaned_tags
 
         save_tasks(self.tasks)
 

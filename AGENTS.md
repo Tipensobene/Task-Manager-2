@@ -1,6 +1,6 @@
 # AI Agent 学习项目上下文
 
-> 学习进度更新于 2026-10-01。本文是本项目的教学守则与路线参考；继续任务时先读取当前源码和 Git 状态，不能把历史进度当作实时状态。第 30 节记录当前继续位置。
+> 学习进度更新于 2026-10-03。本文是本项目的教学守则与路线参考；继续任务时先读取当前源码和 Git 状态，不能把历史进度当作实时状态。第 30 节记录当前继续位置。
 
 ## 1. 学习者背景
 
@@ -274,7 +274,7 @@ storage.py
 
 ---
 
-# 9. 当前处于阶段 3 —— 已完成入门实验，正在迁移 API
+# 9. 当前处于阶段 3 —— API 与最终 Rebuilding 已完成，正在收尾
 
 当前阶段：
 
@@ -479,7 +479,7 @@ JSON 请求示例：
 
 # 13. Task Manager 3.0 第一版接口
 
-Mini Lab 已完成，当前正在迁移 Task Manager。两个 GET 接口已有实现和此前通过测试的记录；POST 已编写，待验证。详细进度以第 30 节为准。
+Mini Lab、基础 CRUD、搜索、过滤、统计、异常处理和 Router 拆分均已完成。Task Tag 最终 Rebuilding 也已实现并通过联合验收。详细进度以第 30 节为准。
 
 第一阶段只实现基础 CRUD：
 
@@ -599,7 +599,7 @@ created_at
 
 其中部分数据应该由服务器生成。
 
-当前内部 `Task` 实际只有 `id`、`title`、`done`、`priority` 四个字段；`created_at` 仅为未来设计示例，不是当前实现或本步要求。`TaskCreate` 已编写，`TaskUpdate` 和 `TaskResponse` 尚待后续学习。
+当前内部 `Task` 包含 `id`、`title`、`done`、`priority`、`tags`。`created_at` 仅为未来设计示例，不是当前实现。`TaskCreate`、`TaskUpdate`、`TaskResponse` 和 `TaskStatsResponse` 均已实现并用于实际接口。
 
 ---
 
@@ -1017,7 +1017,7 @@ push
 
 阶段三大约 5 周，最多预留 1 周机动。
 
-以上是原始时间估计，不是固定截止要求。当前 Mini Lab 已完成，正在基础 CRUD 的 POST 验证前阶段，并已提前接触部分 Pydantic 和错误处理知识；按理解和验收结果推进，不按周次重复或跳过内容。
+以上是原始时间估计，不是固定截止要求。当前阶段三实现、文档、理论验收和 Task Tag Rebuilding 已完成，正在进行 Git 主线整合；不按周次重复已经验收的内容。
 
 ```text
 Week 1
@@ -1288,43 +1288,39 @@ Python Backend
 
 # 30. 当前立即继续的位置
 
-## 当前进度（2026-10-01）
+## 当前进度（2026-10-03）
 
-阶段 2 和 FastAPI Mini Lab 已完成；当前是 **Task Manager 3.0：POST /tasks 已编写，待检查与测试验收**，阶段 3 整体尚未完成。
+阶段 2、FastAPI Mini Lab、Task Manager 3.0 API 和 Task Tag 最终 Rebuilding 均已完成。当前分支为 `feature/web-api`；`feature/task-tags` 已快进合并回该分支，两个分支指向同一提交，工作区在本节更新前为干净状态。
 
-- 核对时分支为 `feature/web-api`，存在 `v2.0.0` 标签。
-- 两个 GET 接口已有提交。`GET /tasks` 每次加载文件，返回任务字典列表；`GET /tasks/{task_id}` 调用公开的 `get_task()`，不存在返回 404，非整数路径参数由框架返回 422。
-- 两个 GET 的通过测试记录来自此前交接，本次文档更新没有重新测试。
-- 当前 `api.py` 的未提交改动包括 `TaskCreate` 和 `create_task()`；不能记为已测试或已提交。
-- `TaskCreate` 使用 `BaseModel`、`ConfigDict(str_strip_whitespace=True)`；标题必填，长度 1～100；优先级为字符串，默认 `normal`。
-- POST 路由指定 201，加载已有任务后调用 `manager.add_task(task.title, task.priority)`；捕获 `ValueError` 并转换为 400，最后返回新任务的 `to_dict()`。
+已实现并验收：
 
-## 已接触知识与当前理解重点
+- `POST /tasks` 创建任务；
+- `GET /tasks` 查看任务，并支持 `priority`、`done`、`keyword`、`tag` 单独或组合过滤；
+- `GET /tasks/stats` 查看统计；
+- `GET /tasks/{task_id}` 查看详情；
+- `PATCH /tasks/{task_id}` 部分更新标题、优先级和标签；
+- `PATCH /tasks/{task_id}/complete` 完成任务；
+- `DELETE /tasks/{task_id}` 删除并返回任务；
+- `TaskCreate`、`TaskUpdate`、`TaskResponse`、`TaskStatsResponse`；
+- `APIRouter` 拆分、全局 `StorageError` 处理和 Python `requests` 客户端；
+- Task Tag 创建、更新、清空、过滤及旧 JSON 兼容。
 
-已学习 FastAPI 与 Uvicorn 的分工、Swagger 客户端、路由、GET/POST、路径参数、查询参数、`Query(alias=...)`、JSON 请求与响应、200/201/404/422，以及 Pydantic `BaseModel`、`model_dump()`、`Field`、`ConfigDict`、长度和数值约束。也补充过类、对象、继承、方法重写和公开/内部方法约定。
+完整 API 验收曾通过 36/36；Task Tag 联合验收通过 23/23。测试均使用临时数据，没有修改真实 `data/tasks.json`。这些是验收记录，项目当前尚未建立持久化的 pytest 测试套件。
 
-最近刚解释过请求体、400/500、异常转换和分层校验，需结合当前代码巩固：
+## 当前设计与已知限制
 
-- 请求体是客户端发送的 JSON；`TaskCreate` 是校验规则，函数参数 `task` 是校验后的对象。
-- `str_strip_whitespace` 只清理首尾空白；`min_length=1` 才拒绝清理后的空标题。
-- API 校验不会覆盖 service 校验。CLI 也调用 service，因此保留其空标题和优先级校验。
-- `except ValueError` 后抛出 `HTTPException` 是把业务异常转换为 HTTP 错误；`raise` 后不会继续成功返回。
-- 模型校验失败返回 422；本版业务 `ValueError` 转为 400；创建保存成功返回 201；未处理的保存异常通常产生 500。
-
-## 保存行为与后续事项
-
-`add_task()` 校验标题与优先级，生成 ID，创建并加入任务，然后调用 `save_tasks(self.tasks)` 保存全部任务，最后返回新任务。API 不重复保存，不把单个新任务当作完整列表覆盖旧数据。
-
-`save_tasks(tasks: list[Task]) -> None` 使用 `w` 模式覆盖 JSON，保存异常向外传播。文件路径以 `storage.py` 所在目录为基准。`load_tasks()` 对文件缺失、JSON 解析失败和 OSError 返回空列表；这会混淆正常空数据与读取错误，写接口可能因此覆盖原数据，需在后续存储错误处理时修正。
-
-响应模型、存储错误处理、ID 复用和 JSON 并发写入风险均为后续事项。本步继续使用 JSON，逐项推进。
+- `api.py` 创建 FastAPI 应用并注册全局异常处理器；`task_routes.py` 负责 HTTP；`service.py` 负责业务规则；`storage.py` 负责 JSON 持久化。
+- `save_tasks()` 先写临时文件再替换正式文件；JSON 格式损坏或其他读写错误会转换为 `StorageError`，API 返回 500。
+- 任务 ID 使用“当前最大 ID + 1”。中间空缺不会被填补，但删除当前最大 ID 后仍可能复用该 ID。
+- JSON 文件仍存在并发写入竞争风险；数据库与并发持久化留到阶段 4。
+- `TestClient` 会产生 Starlette 关于 httpx 的第三方弃用警告，不影响当前业务验收。
 
 ## 下一步
 
-1. 重新读取当前 `api.py` 和 Git 差异，检查学习者的 POST 实现。
-2. 用当前请求示例确认学习者能解释校验、保存和响应的执行顺序。
-3. 获得明确测试要求后，使用隔离数据或可靠备份验证：正常创建返回 201 和四个字段；旧任务保留；省略优先级使用 normal；`" HIGH "` 归一化为 high；空标题、缺失标题、超长标题返回 422；非法优先级返回 400；失败输入不新增任务。
-4. 记录实际测试结果，发现问题先解释并让学习者修改。通过后再决定下一项 CRUD 学习任务，不自动提交。
+1. 提交本次 `AGENTS.md` 进度更新。
+2. 将 `feature/web-api` 合并到 `main`，核对主线历史和工作区。
+3. 经用户明确授权后再执行 `git push`；是否创建 `v3.0.0` 标签由用户决定。
+4. 阶段三收尾后进入 Task Manager 4.0，开始 SQL、PostgreSQL、ORM、pytest 和 Docker；仍按项目驱动方式逐项学习。
 
 教学过程继续采用：
 

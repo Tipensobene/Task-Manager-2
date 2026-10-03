@@ -216,3 +216,25 @@ class TaskManager:
         save_tasks(self.tasks)
 
         return task
+
+
+    def search_by_tag(self,tag:str)->list[Task]:
+        cleaned_tag = tag.strip().lower()
+
+        if not cleaned_tag:
+            raise ValueError("tag cannot be empty")
+
+        res_tasks = []
+
+        for task in self.tasks:
+
+            temp_tags=[]
+            for saved_tag in task.tags:
+                temp_tag=saved_tag.strip().lower()
+                temp_tags.append(temp_tag)
+
+            if cleaned_tag in temp_tags:
+                res_tasks.append(task)
+
+        return res_tasks
+    

@@ -19,7 +19,8 @@ Task Manager 3.0 是一个使用 Python 和 FastAPI 开发的任务管理 Web AP
 ## 主要功能
 
 - 创建、查看、更新、完成和删除任务；
-- 按优先级、完成状态和标题关键词过滤任务；
+- 为任务添加、更新或清空多个标签；
+- 按优先级、完成状态、标题关键词和标签过滤任务；
 - 查看任务统计信息；
 - 使用 Pydantic 校验请求数据和响应数据；
 - 使用正确的 HTTP 状态码返回成功或错误结果；
@@ -132,11 +133,12 @@ GET /tasks
 | `priority` | string | `high` | 按 `low`、`normal` 或 `high` 过滤 |
 | `done` | boolean | `false` | 按完成状态过滤 |
 | `keyword` | string | `python` | 按标题关键词搜索 |
+| `tag` | string | `python` | 按标签过滤，不区分大小写 |
 
 多个条件可以组合使用：
 
 ```http
-GET /tasks?priority=high&done=false&keyword=python
+GET /tasks?priority=high&done=false&keyword=python&tag=backend
 ```
 
 响应示例：
@@ -147,7 +149,8 @@ GET /tasks?priority=high&done=false&keyword=python
         "id": 1,
         "title": "学习 FastAPI",
         "done": false,
-        "priority": "high"
+        "priority": "high",
+        "tags": ["python", "backend"]
     }
 ]
 ```
@@ -188,12 +191,14 @@ Content-Type: application/json
 ```json
 {
     "title": "学习创建任务接口",
-    "priority": "high"
+    "priority": "high",
+    "tags": ["Python", "FastAPI"]
 }
 ```
 
 - `title` 必填，清理首尾空白后长度必须为 1～100；
 - `priority` 可省略，默认值为 `normal`；
+- `tags` 可省略，默认值为空列表；每个标签会清理首尾空白并转成小写；
 - `id` 由服务器生成；
 - `done` 由服务器设置为 `false`。
 
@@ -204,7 +209,8 @@ Content-Type: application/json
     "id": 2,
     "title": "学习创建任务接口",
     "done": false,
-    "priority": "high"
+    "priority": "high",
+    "tags": ["python", "fastapi"]
 }
 ```
 
@@ -220,11 +226,12 @@ Content-Type: application/json
 ```json
 {
     "title": "复习 FastAPI",
-    "priority": "normal"
+    "priority": "normal",
+    "tags": ["Python", "Web"]
 }
 ```
 
-当前支持更新 `title` 和 `priority`。显式传入 `null` 会返回 `400 Bad Request`。
+当前支持更新 `title`、`priority` 和 `tags`。省略字段时保留原值，`tags: []` 会清空标签，显式传入 `null` 会返回 `400 Bad Request`。标签中的空白字符串不合法。
 
 ### 完成任务
 
@@ -290,7 +297,8 @@ CLI 与 Web API 复用相同的业务模型和 JSON 数据文件。
     "id": 1,
     "title": "学习 FastAPI",
     "done": false,
-    "priority": "high"
+    "priority": "high",
+    "tags": ["python", "backend"]
 }
 ```
 
@@ -299,6 +307,7 @@ CLI 与 Web API 复用相同的业务模型和 JSON 数据文件。
 当前存储行为：
 
 - 数据文件不存在时返回空任务列表；
+- 旧任务缺少 `tags` 字段时自动使用空列表；
 - JSON 格式损坏时抛出 `StorageError`；
 - 读取或保存发生其他 `OSError` 时抛出 `StorageError`；
 - FastAPI 全局异常处理器把未处理的 `StorageError` 转换为 `500` JSON 响应。
@@ -324,8 +333,9 @@ Task Manager 3.0 用于学习从命令行程序迁移到 Web API 的过程，目
 - Pydantic 请求和响应模型；
 - 任务 CRUD；
 - 搜索、过滤和统计；
+- Task Tag 标签系统及标签组合过滤；
 - HTTP 异常与存储异常处理；
 - `APIRouter` 路由拆分；
 - Python HTTP 客户端示例。
 
-后续将进行完整接口验收和 Task Tag 独立 Rebuilding。数据库、SQLAlchemy、Docker、LLM、RAG 和 Agent 等内容不属于当前版本范围。
+Task Tag 独立 Rebuilding 已完成并通过联合验收。数据库、SQLAlchemy、Docker、LLM、RAG 和 Agent 等内容不属于当前版本范围。

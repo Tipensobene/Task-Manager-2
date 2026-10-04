@@ -57,7 +57,8 @@ Task_Managers_2/
 ├── utils.py          # 日志配置、输入工具和日志装饰器
 ├── data/             # 任务数据目录
 ├── logs/             # 日志目录
-├── AGENTS.md         # 项目学习路线和协作规则
+├── AGENTS.md         # 学习导师与项目协作规则
+├── PROGRESS.md       # 阶段路线、知识点、验收记录与当前学习进度
 ├── .gitignore
 └── README.md
 ```
@@ -324,18 +325,8 @@ CLI 与 Web API 复用相同的业务模型和 JSON 数据文件。
 
 ID 表示任务身份，不是任务在 Python 列表中的位置。
 
-## 当前学习阶段
+## 后续规划与学习记录
 
-Task Manager 3.0 用于学习从命令行程序迁移到 Web API 的过程，目前已经完成：
+后续版本计划将 JSON 持久化替换为 PostgreSQL，并逐步加入 SQLAlchemy、数据库结构迁移、自动化测试和 Docker 运行配置。这些能力尚未包含在当前版本中。
 
-- FastAPI 和 Uvicorn 基础；
-- HTTP 路由与状态码；
-- Pydantic 请求和响应模型；
-- 任务 CRUD；
-- 搜索、过滤和统计；
-- Task Tag 标签系统及标签组合过滤；
-- HTTP 异常与存储异常处理；
-- `APIRouter` 路由拆分；
-- Python HTTP 客户端示例。
-
-Task Tag 独立 Rebuilding 已完成并通过联合验收。数据库、SQLAlchemy、Docker、LLM、RAG 和 Agent 等内容不属于当前版本范围。
+已完成阶段、知识点大纲、验收记录及当前学习进度统一记录在 [PROGRESS.md](PROGRESS.md)。导师教学方式与操作约束见 [AGENTS.md](AGENTS.md)。本文件继续作为项目功能、接口与运行方式的说明。

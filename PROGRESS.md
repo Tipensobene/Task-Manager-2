@@ -7,7 +7,7 @@
 **阶段四：数据库演示API主要功能已实现并逐项测试；正式任务接口已全部从JSON迁移到PostgreSQL，下一步进行迁移收尾与工程化。**
 
 - 阶段三已完成并发布v3.0.0；保留此前发布证据，本次未重新访问远程。
-- 2026-10-07核对：当前分支feature/database，HEAD为5ef3064（文档重组提交）；数据库学习文件存在暂存及未暂存修改，知识笔记等文件未跟踪。不能把工作区实现当作已提交或已发布。
+- 2026-10-13核对：当前分支`feature/database`；数据库教学示例整理、正式API迁移和学习文档已分别提交为`2a2d080`、`a68ace5`和`0b73591`，工作区在提交后无未提交修改。这些提交仍只存在于本地，尚未合并、打标签或推送。
 - 已完成SQL、PostgreSQL、Psycopg、SQLAlchemy基础、ORM关系、事务实验及FastAPI数据库依赖接入。
 - database_api_demo.py已实现列表、详情、创建、部分更新、删除、完成任务；创建和更新支持标签清理、复用及关联。
 - 列表的priority、done、keyword和tag动态过滤已实现并通过隔离测试；数据库统计接口用一条聚合查询返回总数、已完成数和未完成数，混合数据与事务隔离空表场景均已验证。
@@ -217,6 +217,8 @@
 未决问题包括：同名标签并发创建竞争、数据库级priority CHECK约束、正式业务规则兼容、响应转换适用范围及持久测试覆盖。按实际整合需要逐项处理，不将全部理论变成进入LLM阶段的门槛。
 
 ### 下一次的具体起点
+
+2026-10-13 Git阶段检查点：在进入Alembic前清理了长期混杂的暂存状态，并按职责形成三个本地提交：`2a2d080 chore: organize database learning examples`、`a68ace5 feat: migrate task API to PostgreSQL`、`0b73591 docs: update database learning progress`。提交前完整套件实际结果为`49 passed in 0.84s`，代码空白检查和文档敏感信息检查通过；未执行push。下一步开始Alembic数据库结构迁移导学与实操。
 
 2026-10-13 正式部分更新接口迁移验收：`PATCH /tasks/{task_id}`已通过数据库Session构造Repository与Service，使用`model_dump(exclude_unset=True)`保留部分更新语义，由Router把Service的`ValueError`转换为400、缺失任务转换为404，并在成功路径提交和刷新ORM对象。隔离测试覆盖只修改标题时保留其他字段、同时更新并规范化标题/优先级/标签、标签去重、再次GET确认持久化、缺失ID，以及显式null、非法优先级和空白标签三类400响应。首次验收发现测试模块导入另一个`test_`函数导致pytest重复收集、缺失请求体先触发422，以及主流程误用非法优先级而未覆盖合法完整更新；修正后完整套件实际结果为`49 passed in 1.47s`。至此正式七个任务接口已全部迁移到PostgreSQL。下一步清理`task_routes.py`残留的旧JSON依赖导入，核对正式运行路径不再访问JSON，并同步README。
 

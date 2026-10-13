@@ -1,19 +1,21 @@
-# Task Manager 3.0
+# Task Manager 4.0
 
 ## 项目简介
 
-Task Manager 3.0 是一个使用 Python 和 FastAPI 开发的任务管理 Web API。项目从 Task Manager 2.0 命令行程序升级而来，在保留 CLI 的同时，通过 HTTP 和 JSON 向浏览器、Swagger UI、Python 程序等客户端提供任务管理能力。
+Task Manager 4.0 是一个使用 Python、FastAPI、SQLAlchemy 和 PostgreSQL 开发的任务管理 Web API。项目从 Task Manager 2.0 命令行程序升级而来，在保留旧 CLI 的同时，通过 HTTP 和 JSON 向浏览器、Swagger UI、Python 程序等客户端提供任务管理能力。
 
-项目继续复用原有的 `TaskManager` 业务逻辑，并使用 JSON 文件保存任务。当前阶段的重点是学习 HTTP、FastAPI、Pydantic、API 分层、异常处理和客户端调用。
+正式 Web API 已采用 Router、Service 和 Repository 分层，并使用 PostgreSQL 持久化任务、标签及其多对多关系。旧 CLI 仍保留原有 `TaskManager` 和 JSON 存储，作为历史版本入口。
 
 ```text
 浏览器 / Swagger UI / Python requests
                   ↓ HTTP
               FastAPI
                   ↓
-             TaskManager
+          TaskService
                   ↓
-          data/tasks.json
+        TaskRepository
+                  ↓
+       SQLAlchemy / PostgreSQL
 ```
 
 ## 主要功能
@@ -24,8 +26,9 @@ Task Manager 3.0 是一个使用 Python 和 FastAPI 开发的任务管理 Web AP
 - 查看任务统计信息；
 - 使用 Pydantic 校验请求数据和响应数据；
 - 使用正确的 HTTP 状态码返回成功或错误结果；
-- 统一处理 JSON 文件读写异常；
-- 使用临时文件降低覆盖写入过程中损坏原数据的风险；
+- 使用 PostgreSQL 持久化任务和标签；
+- 使用 SQLAlchemy ORM、Session 和事务管理数据库操作；
+- 使用 pytest 与事务回滚隔离自动化测试；
 - 保留 Task Manager 2.0 命令行入口；
 - 提供基于 `requests` 的 Python 客户端示例。
 
@@ -38,23 +41,31 @@ Task Manager 3.0 是一个使用 Python 和 FastAPI 开发的任务管理 Web AP
 | Uvicorn | 运行 ASGI Web 服务器 |
 | Pydantic | 请求和响应数据校验 |
 | requests | Python HTTP 客户端示例 |
-| dataclass | 定义内部 `Task` 和 `TaskManager` 模型 |
-| JSON | 任务数据持久化 |
-| pathlib | 管理数据文件与日志路径 |
-| logging | 记录任务操作日志 |
+| SQLAlchemy | ORM 映射、数据库查询与事务操作 |
+| PostgreSQL | 正式 Web API 的数据持久化 |
+| Psycopg | SQLAlchemy 使用的 PostgreSQL 驱动 |
+| pytest | 自动化测试与数据库测试隔离 |
+| dataclass / JSON | 保留的旧 CLI 模型与存储方式 |
 
 ## 项目结构
 
 ```text
 Task_Managers_2/
-├── api.py            # FastAPI 应用入口，注册 Router 和全局异常处理器
+├── api.py            # FastAPI 应用入口，注册任务 Router
 ├── task_routes.py    # 任务路由、请求模型和响应模型
+├── task_service.py   # 正式 Web API 的业务规则
+├── task_repository.py # SQLAlchemy 数据访问层
+├── database.py       # Engine、Session 工厂与 FastAPI 数据库依赖
+├── orm_models.py     # tasks、tags 与关联表的 ORM 映射
 ├── client_demo.py    # 使用 requests 调用 API 的客户端示例
 ├── main.py           # Task Manager 2.0 命令行入口
 ├── models.py         # 内部 Task 数据模型
 ├── service.py        # TaskManager 业务逻辑
 ├── storage.py        # JSON 加载、保存和存储异常
 ├── utils.py          # 日志配置、输入工具和日志装饰器
+├── database_api_demo.py # 数据库 API 教学演示入口
+├── examples/database/ # 数据库教学脚本：psycopg/与sqlalchemy/
+├── tests/            # pytest自动化测试
 ├── data/             # 任务数据目录
 ├── logs/             # 日志目录
 ├── AGENTS.md         # 学习导师与项目协作规则
@@ -70,28 +81,42 @@ api.py
   ↓
 task_routes.py
   ↓
-service.py
+task_service.py
   ↓
-storage.py
+task_repository.py
+  ↓
+database.py / PostgreSQL
 ```
 
-- `api.py` 创建 FastAPI 应用，注册任务 Router 和全局存储异常处理器。
-- `task_routes.py` 负责 HTTP 请求与响应，并把业务操作交给 `TaskManager`。
-- `service.py` 负责创建、查询、更新、删除、搜索和统计等业务逻辑。
-- `storage.py` 负责在 `Task` 对象与 JSON 文件之间转换数据。
-- `models.py` 定义内部任务对象，不依赖 FastAPI。
+- `api.py` 创建 FastAPI 应用并注册任务 Router。
+- `task_routes.py` 负责接收和校验 HTTP 数据、调用 Service、转换异常并控制提交事务。
+- `task_service.py` 负责输入规范化及创建、查询、更新、删除和统计等业务规则。
+- `task_repository.py` 负责通过 SQLAlchemy 查询和修改 PostgreSQL 数据。
+- `database.py` 创建 Engine 和 Session，并通过依赖注入为请求提供 Session。
+- `orm_models.py` 定义任务、标签和中间表的 ORM 映射。
+- `main.py → service.py → storage.py` 是保留的旧 CLI/JSON 运行链。
 
 ## 安装依赖
+
+阶段四教学脚本已经集中到 [examples/database](examples/database/README.md)，该说明包含模块运行命令和 PyCharm 配置方式。正式 Web API 已完成 PostgreSQL 迁移，`database_api_demo.py` 仅保留为学习过程中的演示入口。
 
 建议先创建并激活虚拟环境，然后安装当前版本需要的依赖：
 
 ```powershell
-python -m pip install fastapi uvicorn requests
+python -m pip install -r requirements.txt
 ```
 
 ## 运行 Web API
 
-在项目根目录执行：
+正式 API 连接本机 PostgreSQL 的 `task_manager_learning` 数据库。启动前先在当前 PowerShell 会话设置数据库密码环境变量：
+
+```powershell
+$env:TASK_MANAGER_DB_PASSWORD = "你的数据库密码"
+```
+
+该变量只对当前 PowerShell 会话及其启动的子进程有效。不要把真实密码写入源码或提交到 Git。
+
+然后在项目根目录执行：
 
 ```powershell
 python -m uvicorn api:app --reload
@@ -240,7 +265,7 @@ Content-Type: application/json
 PATCH /tasks/2/complete
 ```
 
-成功后任务的 `done` 为 `true`。重复完成已经完成的任务会返回 `400 Bad Request`。
+成功后任务的 `done` 为 `true`。重复请求会继续保持 `done=true`。
 
 ### 删除任务
 
@@ -256,10 +281,10 @@ DELETE /tasks/2
 | --- | --- | --- |
 | `200 OK` | 请求成功 | 查询、更新或删除成功 |
 | `201 Created` | 资源创建成功 | 创建任务成功 |
-| `400 Bad Request` | 业务输入不合法 | 非法优先级、重复完成任务、更新字段为 `null` |
+| `400 Bad Request` | 业务输入不合法 | 非法优先级、空白筛选条件、更新字段为 `null` |
 | `404 Not Found` | 资源不存在 | 查询、更新或删除不存在的任务 |
 | `422 Unprocessable Entity` | 请求没有通过模型校验 | 缺少标题、标题过长、路径 ID 不是整数 |
-| `500 Internal Server Error` | 服务器内部处理失败 | JSON 文件读取、解析或保存失败 |
+| `500 Internal Server Error` | 服务器内部处理失败 | 未处理的数据库连接错误等服务器异常 |
 
 错误响应示例：
 
@@ -287,46 +312,30 @@ python client_demo.py
 python main.py
 ```
 
-CLI 与 Web API 复用相同的业务模型和 JSON 数据文件。
+CLI 仍使用旧的 `TaskManager`、数据模型和 JSON 文件；它与正式 Web API 的 PostgreSQL 数据互不同步。
 
 ## 数据存储
 
-任务保存在 `data/tasks.json`，每个任务包含：
+正式 Web API 使用 PostgreSQL 的三张表：
 
-```json
-{
-    "id": 1,
-    "title": "学习 FastAPI",
-    "done": false,
-    "priority": "high",
-    "tags": ["python", "backend"]
-}
-```
+| 表 | 作用 |
+| --- | --- |
+| `tasks` | 保存任务的标题、完成状态和优先级 |
+| `tags` | 保存唯一的规范化标签名称 |
+| `task_tags` | 通过 `task_id` 和 `tag_id` 表示任务与标签的多对多关系 |
 
-保存时会先把完整数据写入临时文件，写入成功后再替换正式的 `tasks.json`。这样可以降低直接使用 `w` 模式覆盖正式文件时，写入中途失败造成原数据损坏的风险。
+SQLAlchemy Session 跟踪 ORM 对象变化；Repository 执行查询、`add()`、`delete()` 和 `flush()`，Router 在成功的写请求边界执行 `commit()`。任务删除后，中间表中的对应关系通过外键级联删除，标签记录可以继续被其他任务复用。
 
-当前存储行为：
-
-- 数据文件不存在时返回空任务列表；
-- 旧任务缺少 `tags` 字段时自动使用空列表；
-- JSON 格式损坏时抛出 `StorageError`；
-- 读取或保存发生其他 `OSError` 时抛出 `StorageError`；
-- FastAPI 全局异常处理器把未处理的 `StorageError` 转换为 `500` JSON 响应。
-
-当前仍使用 JSON 文件，不处理多个请求同时写入造成的竞争问题。数据库和并发持久化将在后续阶段学习。
+`data/tasks.json` 只供保留的旧 CLI 使用，不再是正式 Web API 的数据源。
 
 ## 任务 ID
 
-任务 ID 由服务器生成：
-
-- 没有任务时从 `1` 开始；
-- 有任务时使用当前最大 ID 加 `1`；
-- 删除中间位置的任务后不会填补该空缺；如果删除的是当前最大 ID，下一次创建任务仍可能复用这个 ID。
+任务 ID 由 PostgreSQL identity 列生成。应用不根据列表位置或当前最大值自行计算 ID；删除任务后也不应依赖后续 ID 是否连续。
 
 ID 表示任务身份，不是任务在 Python 列表中的位置。
 
 ## 后续规划与学习记录
 
-后续版本计划将 JSON 持久化替换为 PostgreSQL，并逐步加入 SQLAlchemy、数据库结构迁移、自动化测试和 Docker 运行配置。这些能力尚未包含在当前版本中。
+PostgreSQL、SQLAlchemy ORM 和事务隔离自动化测试已经接入正式 API。阶段四后续将加入 Alembic 数据库结构迁移、旧 JSON 数据导入、Docker 运行配置和独立重建验收。
 
 已完成阶段、知识点大纲、验收记录及当前学习进度统一记录在 [PROGRESS.md](PROGRESS.md)。导师教学方式与操作约束见 [AGENTS.md](AGENTS.md)。本文件继续作为项目功能、接口与运行方式的说明。

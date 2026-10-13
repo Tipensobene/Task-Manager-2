@@ -1,7 +1,15 @@
-from fastapi import APIRouter,HTTPException
-from pydantic import BaseModel,ConfigDict,Field
-from service import TaskManager
-from storage import load_tasks
+from fastapi import APIRouter,HTTPException,Depends
+from sqlalchemy.orm import Session
+
+from database import get_session
+from task_repository import TaskRepository
+from task_service import TaskService
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+)
 
 #创建任务路由器
 task_router=APIRouter(
@@ -30,11 +38,23 @@ class TaskUpdate(BaseModel):
 
 #响应模型
 class TaskResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id:int
     title:str
     done:bool
     priority:str
     tags:list[str]
+
+    @field_validator("tags",mode="before")
+    @classmethod
+    def convert_tags(cls,tags):
+
+        return [
+            tag if isinstance(tag,str) else tag.name
+            for tag in tags
+        ]
+
 
 
 class TaskStatsResponse(BaseModel):
@@ -43,98 +63,55 @@ class TaskStatsResponse(BaseModel):
     uncompleted_num:int
 
 
-@task_router.get("/stats",response_model=TaskStatsResponse)
-def get_task_stats():
-    tasks = load_tasks()
-    manager = TaskManager(tasks)
+@task_router.get(
+    "/stats",
+    response_model=TaskStatsResponse
+)
+def get_task_stats(
+        session:Session=Depends(get_session),
+):
+    repository=TaskRepository(session)
+    service=TaskService(repository)
 
-    return manager.get_statistics()
+    return service.get_stats()
 
 @task_router.get("",response_model=list[TaskResponse])
-def get_tasks(priority:str|None=None,done:bool|None=None,keyword:str|None=None,tag:str|None=None):
-    tasks = load_tasks()
-    manager = TaskManager(tasks)
+def get_tasks(
+    priority:str|None=None,
+    done:bool|None=None,
+    keyword:str|None=None,
+    tag:str|None=None,
+    session:Session=Depends(get_session),
+):
 
-    if priority is None:
-        task_list = manager.list_tasks()
+    repository=TaskRepository(session)
+    service=TaskService(repository)
 
-    else:
-        try:
-            task_list = manager.search_by_priority(priority)
+    try:
+        return service.list_tasks(
+            priority=priority,
+            done=done,
+            keyword=keyword,
+            tag=tag,
+        )
 
-        except ValueError as error:
-            raise HTTPException(
-                status_code=400,
-                detail=str(error)
-            )
-
-    match_ids = []
-    if keyword is not None:
-
-        try:
-            keyword_list=manager.search_task(keyword)
-
-            for task in keyword_list:
-                match_ids.append(task.id)
-
-            keyword_filtered_tasks=[]
-            for task in task_list:
-                if task.id in match_ids:
-                    keyword_filtered_tasks.append(task)
-
-            task_list=keyword_filtered_tasks
-
-        except ValueError as error:
-            raise HTTPException(
-                status_code=400,
-                detail=str(error)
-            )
-
-    result=[]
-
-    if done is not None:
-        filtered_tasks=[]
-
-        for task in task_list:
-            if task.done==done:
-                filtered_tasks.append(task)
-
-        task_list=filtered_tasks
-
-    if tag is not None:
-
-        try:
-            tag_list=manager.search_by_tag(tag)
-
-            tag_filtered_tasks=[]
-            for task in tag_list:
-                if task in task_list:
-                    tag_filtered_tasks.append(task)
-
-            task_list=tag_filtered_tasks
-
-        except ValueError as error:
-            raise HTTPException(
-                status_code=400,
-                detail=str(error)
-            )
-
-
-
-    for task in task_list:
-        result.append(task.to_dict())
-
-
-    return result
+    except ValueError as error:
+        raise HTTPException(
+            status_code=400,
+            detail=str(error)
+        )
 
 @task_router.get("/{task_id}",response_model=TaskResponse)
-def get_task(task_id: int):
+def get_task(
+        task_id: int,
+        session:Session=Depends(get_session),
+):
 
-    tasks =load_tasks()
-    manager = TaskManager(tasks)
+    repository=TaskRepository(session)
+    service=TaskService(repository)
 
 
-    target=manager.get_task(task_id)
+    target=service.get_task(task_id)
 
     if target is None:
         raise HTTPException(
@@ -142,7 +119,7 @@ def get_task(task_id: int):
             detail="Task not found"
         )
 
-    return target.to_dict()
+    return target
 
 
 
@@ -151,14 +128,24 @@ def get_task(task_id: int):
     status_code=201,
     response_model=TaskResponse
 )
-def create_task(task: TaskCreate):
+def create_task(
+        task: TaskCreate,
+        session:Session=Depends(get_session),
+):
 
+    repository=TaskRepository(session)
+    service=TaskService(repository)
 
-    tasks = load_tasks()
-    manager = TaskManager(tasks)
 
     try:
-        new_task=manager.add_task(task.title,task.priority,task.tags)
+        new_task=service.create_task(
+            task.title,
+            task.priority,
+            task.tags,
+        )
+
+        session.commit()
+        session.refresh(new_task)
 
     except ValueError as error:
         raise HTTPException(
@@ -167,75 +154,92 @@ def create_task(task: TaskCreate):
 
         )
 
-    return new_task.to_dict()
+    return new_task
 
-@task_router.patch("/{task_id}/complete",response_model=TaskResponse)
-def complete_task(task_id: int):
+@task_router.patch(
+    "/{task_id}/complete",
+    response_model=TaskResponse,
+)
+def complete_task(
+        task_id: int,
+        session:Session=Depends(get_session),
+):
+    repository=TaskRepository(session)
+    service=TaskService(repository)
 
-    tasks = load_tasks()
-    manager = TaskManager(tasks)
+    completed_task=service.complete_task(task_id)
 
-    if manager.get_task(task_id) is None:
+    if completed_task is None:
         raise HTTPException(
             status_code=404,
-            detail="Task not found"
+            detail="Task not found",
         )
 
-    try:
-        completed_task = manager.complete_task(task_id)
+    session.commit()
+    session.refresh(completed_task)
 
-    except ValueError as error:
-        raise HTTPException(
-            status_code=400,
-            detail=str(error)
-        )
+    return completed_task
 
-    return completed_task.to_dict()
 
-@task_router.delete("/{task_id}",response_model=TaskResponse)
-def delete_task(task_id: int):
-    tasks = load_tasks()
-    manager = TaskManager(tasks)
+@task_router.delete(
+    "/{task_id}",
+    response_model=TaskResponse
+)
+def delete_task(
+        task_id: int,
+        session:Session=Depends(get_session),
+):
+    repository=TaskRepository(session)
+    service=TaskService(repository)
 
-    try:
-        deleted_task=manager.delete_task(task_id)
-    except ValueError as error:
+    deleted_task=service.delete_task(task_id)
+
+    if deleted_task is None:
         raise HTTPException(
             status_code=404,
-            detail=str(error)
+            detail="Task not found",
         )
 
-    return deleted_task.to_dict()
+    session.commit()
 
-@task_router.patch("/{task_id}",response_model=TaskResponse)
-def update_task(task_id: int,task_update: TaskUpdate):
-    tasks = load_tasks()
-    manager = TaskManager(tasks)
+    return deleted_task
 
-    task=manager.get_task(task_id)
-    if task is None:
-        raise HTTPException(
-            status_code=404
-        )
+@task_router.patch(
+    "/{task_id}",
+    response_model=TaskResponse
+)
+def update_task(
+        task_id: int,
+        task_update: TaskUpdate,
+        session:Session=Depends(get_session),
+):
+    repository=TaskRepository(session)
+    service=TaskService(repository)
 
-    #未显式提供改动字段直接过滤 不显示在update_data中
-    update_data=task_update.model_dump(exclude_unset=True)
-
-    for field_name, value in update_data.items():
-        if value is None:
-            raise HTTPException(
-                status_code=400,
-                detail=f"{field_name} cannot be null"
-            )
+    update_data=task_update.model_dump(
+        exclude_unset=True,
+    )
 
     try:
-        res_data=manager.update_task(task_id,**update_data)
+        updated_task=service.update_task(
+            task_id,
+            update_data,
+        )
+
+
 
     except ValueError as error:
         raise HTTPException(
             status_code=400,
-            detail=str(error)
+            detail=str(error),
         )
 
-    return res_data.to_dict()
+    if updated_task is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Task not found",
+        )
 
+    session.commit()
+    session.refresh(updated_task)
+    return updated_task

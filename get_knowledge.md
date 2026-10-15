@@ -2,6 +2,599 @@
 
 > 2026-10-09路径调整：文中早期数据库实验文件名保留不变，Psycopg脚本现位于`examples/database/psycopg/`，SQLAlchemy和ORM脚本位于`examples/database/sqlalchemy/`。旧示例中的直接脚本运行命令请改用[数据库实验运行说明](examples/database/README.md)中的模块方式；公共`database.py`、`orm_models.py`和`database_api_demo.py`仍在根目录。
 
+## SQLAlchemy：`Base.metadata`与数据库表结构（2026-10-14）
+
+### 为什么需要元数据
+
+`Base.metadata`是SQLAlchemy保存表结构描述的`MetaData`对象。它记录表、列、数据类型、主键、外键和约束，不保存查询得到的任务记录。“元数据（Metadata）”指描述数据结构的数据：任务标题是业务数据，“title是不允许为空的文本列”是元数据。
+
+```python
+from sqlalchemy.orm import DeclarativeBase
+
+class Base(DeclarativeBase):
+    pass
+```
+
+继承同一个`Base`的ORM模型通常共享该对象。Python执行模型类定义时，SQLAlchemy会创建对应的`Table`结构并登记到`Base.metadata`，同时建立类与表之间的ORM映射。
+
+```text
+Base.metadata
+├── tasks：任务表结构
+├── tags：标签表结构
+└── task_tags：关联表结构
+```
+
+模型模块必须先被导入并执行，结构才会登记；metadata不会自动扫描项目寻找模型。构造`TaskRecord(title="学习SQL")`是创建业务对象，与登记表结构是不同操作。
+
+### 属性、类型与结构查看
+
+`Base`是ORM基类，`Base.metadata`是`MetaData`实例，`MetaData`是SQLAlchemy提供的类。metadata是属性，访问时不用括号；调用其方法时才使用括号。
+
+```python
+from sqlalchemy import MetaData
+
+assert isinstance(Base.metadata, MetaData)
+print(Base.metadata.tables.keys())
+
+tasks_table = Base.metadata.tables["tasks"]
+assert tasks_table is TaskRecord.__table__
+print(tasks_table.columns.keys())
+```
+
+`.tables`是表名到`Table`对象的映射；使用schema时，键可能是`public.tasks`。`TaskRecord.__table__`对应单张表的结构对象。以上查看的是Python内存中的结构，不会查询数据库中的任务。
+
+### `create_all()`：根据结构描述创建表
+
+```python
+Base.metadata.create_all(
+    bind=engine,
+    tables=None,
+    checkfirst=True,
+)
+```
+
+| 参数 | 用途与默认值 |
+| --- | --- |
+| `bind` | 执行操作的`Engine`或`Connection` |
+| `tables` | 要创建的`Table`对象序列；默认`None`，处理全部登记表 |
+| `checkfirst` | 默认`True`，检查表是否已经存在 |
+
+返回`None`，主要副作用是执行建表SQL；按外键依赖安排创建顺序。它要求目标数据库已经存在，不会创建`task_manager_learning`数据库本身。连接失败、权限不足或DDL失败时会抛出相应数据库异常。
+
+`create_all()`适合初次建表或测试初始化，但不会自动修改已有表。模型新增列后再次调用它，不会给已有表增加该列；此类结构变更由Alembic等迁移工具管理。传入Engine时会为操作获取连接并释放所获取的资源；传入Connection时，连接与事务的生命周期由调用方管理。
+
+### 模型描述与真实数据库的区别
+
+| 位置 | 保存内容 |
+| --- | --- |
+| PostgreSQL | 实际存在的表、列、约束与业务数据 |
+| `Base.metadata` | Python模型声明的表结构描述 |
+
+即使之前已经在pgAdmin手动建表，SQLAlchemy仍需要模型映射来构造SQL。定义模型不会自动修改数据库，两者应保持匹配；列名或结构不匹配可能在执行时导致错误。
+
+### `reflect()`：读取已有数据库结构
+
+```python
+Base.metadata.reflect(bind=engine)
+```
+
+返回`None`，连接数据库读取已有表、列和约束，将`Table`对象加载到该metadata中；此过程称为反射（Reflection）。常用可选参数包括`schema`（指定schema）和`only`（限定读取的表名）。它不会自动生成`TaskRecord`这样的ORM模型类，也不用于自动同步两端结构。连接与权限问题可能导致异常。
+
+### `drop_all()`：删除登记的表
+
+```python
+Base.metadata.drop_all(
+    bind=engine,
+    tables=None,
+    checkfirst=True,
+)
+```
+
+返回`None`；参数含义与`create_all()`类似，会按依赖关系安排删表顺序。其副作用是删除真实表及其中数据，而不是清空Python中的结构描述。当前仅认识用途，不应对练习数据库随意执行；实际操作需要按项目高影响操作规则确认。
+
+### 在当前项目调用链中的位置
+
+```text
+Base.metadata：描述表结构
+Engine：管理连接和连接池
+Session：组织ORM查询、修改与事务
+TaskRecord实例：表示一条任务
+```
+
+`select(TaskRecord)`利用模型映射及表结构构造SQL，Session通过数据库连接执行，查询结果再转成ORM对象。metadata提供结构信息，本身不保存这些查询结果。
+
+## Alembic：让数据库结构变化可追踪（2026-10-14）
+
+### 为什么项目需要Alembic
+
+`orm_models.py`描述Python代码期望的目标结构，PostgreSQL保存真实表结构，Git记录源码版本；修改ORM模型不会自动修改已经存在的表。例如给`TaskRecord`增加`description`映射后，数据库中的`tasks`表仍然没有该列。Alembic使用按顺序排列的Python迁移脚本，明确记录数据库应怎样从旧结构变成新结构。
+
+```text
+ORM模型：目标结构
+      ↓ 比较
+迁移脚本：从旧结构到新结构的操作
+      ↓ upgrade
+PostgreSQL：实际结构
+```
+
+Git管理代码和迁移文件，Alembic管理表、列、外键、索引等数据库结构；任务和标签等业务数据仍由应用代码管理。
+
+### Alembic与`create_all()`的区别
+
+`Base.metadata.create_all()`适合在空数据库或测试环境创建尚不存在的表。表已经存在时，它不会因为ORM模型新增字段就自动对旧表执行`ALTER TABLE`。Alembic则会把新增列等变化记录成可以审查和重复执行的迁移操作，例如：
+
+```python
+def upgrade() -> None:
+    op.add_column(
+        "tasks",
+        sa.Column("description", sa.Text(), nullable=True),
+    )
+```
+
+这使开发机、测试环境和部署环境能够按照同一版本链演进，而不需要删除已有表和数据。
+
+### 迁移环境中的文件
+
+执行`alembic init alembic`后通常生成：
+
+```text
+alembic.ini
+alembic/
+├── env.py
+├── script.py.mako
+├── README
+└── versions/
+```
+
+| 文件或目录 | 作用 |
+| --- | --- |
+| `alembic.ini` | 主配置文件，保存迁移目录、日志等配置；真实密码不应写入并提交 |
+| `env.py` | `current`、`upgrade`及自动生成等需要迁移环境的命令会执行它，负责数据库连接、加载模型及配置迁移上下文；并非所有Alembic命令都会运行它 |
+| `script.py.mako` | 创建新迁移文件时使用的模板 |
+| `versions/` | 保存各个版本的迁移脚本 |
+
+为了让自动生成看见当前项目的ORM结构，`env.py`需要导入模型基类并设置：
+
+```python
+from orm_models import Base
+
+target_metadata = Base.metadata
+```
+
+模型模块必须先被导入执行，表结构才会登记到metadata。`target_metadata`是Alembic拿来与真实数据库结构比较的目标。
+
+### 从`current`理解配置文件与运行流程
+
+```powershell
+python -m alembic current
+```
+
+`python -m alembic`使用当前Python环境运行Alembic包；`current`是命令参数，要求查看数据库登记的迁移版本。在项目根目录执行时，默认使用`alembic.ini`。执行链为：准备Config对象并读取配置 → 定位迁移目录 → 执行env.py → 配置日志和迁移环境 → 建立连接 → 查询当前迁移版本。
+
+INI是配置格式，不是Python代码：`#`表示注释，`[alembic]`表示配置分组，`名称 = 值`表示配置项。
+
+```ini
+[alembic]
+script_location = %(here)s/alembic
+prepend_sys_path = .
+```
+
+`%(here)s`表示INI所在目录；`script_location`帮助Alembic找到迁移环境。`prepend_sys_path`帮助Python找到导入的模块，其中`.`表示运行命令时的当前工作目录，两者的相对路径基准不能混淆。从项目根目录运行时，Python可以找到`database.py`和`orm_models.py`。
+
+```python
+from alembic import context
+
+config = context.config
+```
+
+`context`是Alembic提供的模块，可访问当前运行环境；`context.config`取得已有的`Config`对象，赋值给变量`config`。此赋值本身不创建配置对象，也不重新读取文件。`alembic.ini`是磁盘文件，`Config`是内存中的配置对象，`config`是引用它的变量名。Config也可以在没有INI文件时由程序创建，不能理解成必须先读文件才能创建对象。
+
+| 当前涉及的Config接口 | 参数、返回值与作用 |
+| --- | --- |
+| `get_main_option(name, default=None)` | 按名称读取主分组配置；返回字符串或默认值，本身不连接数据库 |
+| `set_main_option(name, value)` | 两个参数是配置项名称与字符串值；返回None，修改内存配置，不写回INI |
+| `config_file_name` | 属性，保存INI路径或None；访问时不加括号 |
+
+`current`查看迁移版本，不是查看所有表结构，也不会比较模型差异。已有三张业务表但没有登记版本时，可以没有版本号输出；这不意味着没有表。当前生成的env.py根据命令准备环境，查询版本不会执行upgrade；但env.py是可执行Python文件，人为加入的额外代码仍会执行。
+
+### `context`的身份及与`config`的区别
+
+`from alembic import context`导入的是代理模块，访问会转交给当前命令使用的EnvironmentContext对象。运行环境由Alembic建立，因此env.py不需要自己写`context = ...`。EnvironmentContext协调命令配置和执行环境；configure建立更底层的MigrationContext，组织数据库连接、数据库类型和迁移选项。
+
+`config`负责读取或修改配置项，Engine负责获取连接，Connection执行数据库操作，Base.metadata提供模型结构描述；context是把这些信息用于本次迁移命令的统一入口。
+
+```text
+config.set_main_option() → 修改内存中的配置项
+engine_from_config()    → 读取配置，创建Engine
+Engine.connect()        → 获取真实Connection
+context.configure()     → 配置本次迁移运行环境
+context.run_migrations() → 执行当前命令安排的操作
+```
+
+因此set_main_option不是直接创建或配置已有Engine，configure也不是生成迁移脚本文件。前者回答“配置中填写什么值”，后者回答“本次操作使用哪个连接和哪些结构信息”。
+
+context接口速查（详细执行流程见后续各段）：
+
+| 接口 | 参数、返回值与使用条件 |
+| --- | --- |
+| `context.config` | 属性，取得本次命令使用的Config对象 |
+| `is_offline_mode()` | 无参，返回bool，判断运行模式 |
+| `configure(...)` | 返回None，配置MigrationContext；connection和target_metadata默认None；compare_type默认True，compare_server_default默认False |
+| `begin_transaction()` | 无参，返回事务上下文管理器；具体效果依赖数据库和模式 |
+| `run_migrations(**kw)` | 当前无参调用，返回None；执行当前命令安排的流程，可选关键字参数可传给迁移函数 |
+| `get_context()` | 无参，返回已配置的MigrationContext；必须先configure |
+| `get_bind()` | 无参，在线模式取得当前配置的Connection，不创建独立连接；必须先configure |
+
+get_context和get_bind仅介绍用途，当前无需使用。env.py依赖Alembic准备的运行环境，直接作为普通Python脚本运行不能假定这些接口可用。
+
+### 日志配置逐行说明
+
+```python
+from logging.config import fileConfig
+
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
+```
+
+第一行从Python标准库导入日志配置函数。条件检查是否存在配置文件路径；随后按文件中的日志分组设置输出级别、输出目标和格式。`fileConfig()`第一个参数是配置文件路径（也支持文件对象等），返回None；默认`disable_existing_loggers=True`可能禁用已有的非根日志记录器。文件存在不保证日志配置完整，缺少所需日志分组仍可能报错。
+
+例如`INFO [alembic.runtime.migration] ...`是普通运行信息，不等于报错。日志配置影响程序的日志行为，不负责定义表结构或建立业务数据。
+
+### 数据库URL配置与百分号转义
+
+`database_url`是SQLAlchemy的URL对象。`render_as_string(hide_password=True)`返回字符串，默认隐藏密码；连接配置需要真实凭据时使用False，不能将结果打印到日志或写入仓库。调用`config.set_main_option()`只覆盖运行时配置，不把真实密码写回INI。
+
+此前示例还需补足一个细节：ConfigParser把百分号当作插值语法，而URL编码可能包含百分号。写入配置时要转义：
+
+```python
+config.set_main_option(
+    "sqlalchemy.url",
+    database_url.render_as_string(hide_password=False).replace("%", "%%"),
+)
+```
+
+这一步只适用于经过ConfigParser的配置值，读取配置后百分号恢复；不要把加倍的百分号直接传给数据库驱动。
+
+`str.replace(old, new, count=-1)`返回替换后的新字符串，不修改原字符串；old是被替换文本，new是替代文本，count默认-1表示替换全部匹配。例如`"%40".replace("%", "%%")`得到`"%%40"`。写入配置时转义，读取配置时恢复`%40`，再由URL解析处理；这不是修改真实密码。此前省略replace的示例对不含百分号的URL可能运行正常，但不适合包含URL编码字符的通用情况。
+
+### `target_metadata`逐段理解
+
+```python
+from orm_models import Base
+target_metadata = Base.metadata
+```
+
+导入会执行模型模块，使类映射和`Table(..., Base.metadata, ...)`登记表结构。第二行让变量引用同一个MetaData对象，不会复制结构，也不连接或改变数据库。项目的关联表虽然没有单独的ORM类，也因Table构造时传入Base.metadata而被登记。
+
+后续`context.configure(connection=connection, target_metadata=target_metadata)`把数据库连接和模型结构分别交给迁移环境：连接用于访问实际数据库，metadata用于自动生成时描述目标。完整方法与事务生命周期留待下一小节展开。
+
+模型里新增列而未执行迁移时，两端仍不一致。`target_metadata=None`也不是要求删除所有表，而是未提供目标元数据，自动生成通常会因此报错；空MetaData对象则是另一种情况。
+
+参考：[Config接口](https://alembic.sqlalchemy.org/en/latest/api/config.html)、[Python日志配置](https://docs.python.org/3/library/logging.config.html)。
+
+### 在线与离线分支的执行顺序
+
+```python
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()
+```
+
+`context.is_offline_mode()`不需要参数，返回bool；判断本身不连接数据库。在线和离线指是否通过真实数据库连接执行，不是电脑是否联网。`current`需要读取数据库版本，走在线分支；支持`--sql`的迁移命令可以走离线分支生成SQL文本。
+
+`def run_migrations_online() -> None:`执行时定义函数，不立即运行函数体；文件底部调用才执行。`-> None`是返回类型注解，表示不提供有意义的返回结果。当前if/else一次只调用一个分支。
+
+### 从配置字典创建Engine
+
+```python
+connectable = engine_from_config(
+    config.get_section(config.config_ini_section, {}),
+    prefix="sqlalchemy.",
+    poolclass=pool.NullPool,
+)
+```
+
+按求值顺序解释：
+
+1. `config.config_ini_section`是属性，默认字符串`"alembic"`，对应INI中的`[alembic]`分组。
+2. `config.get_section(name, default=None)`读取该分组，返回配置字典；此处显式传入`{}`，分组不存在时返回空字典。缺少URL仍会导致后续创建Engine失败。
+3. SQLAlchemy的`engine_from_config(configuration, prefix="sqlalchemy.", **kwargs)`从字典筛选带此前缀的键，并去掉前缀。例如`sqlalchemy.url`变成`url`；`script_location`不作为Engine参数。部分受支持的字符串值会转换成相应类型。
+4. `poolclass=pool.NullPool`指定连接管理类；传入类本身，不需要括号。SQLAlchemy内部负责构造实例，显式关键字参数可以覆盖配置字典中的对应选项。
+5. 返回Engine对象，变量`connectable`引用它；与`create_engine()`的主要差别是参数来自配置字典。
+
+连接池可以保留连接以供复用；NullPool在每次需要时建立连接，关闭时关闭底层连接，不缓存供后续复用。它不是关闭事务，也不意味着无法连接数据库。
+
+创建Engine通常还没有建立真实连接，成功不证明密码正确或数据库可达。URL格式、驱动加载等问题可能在创建时暴露，认证和网络问题通常在获取连接时暴露。
+
+### Connection生命周期与迁移环境配置
+
+```python
+with connectable.connect() as connection:
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+    )
+```
+
+`Engine.connect()`当前用法无需参数，返回SQLAlchemy Connection对象，获取真实连接时可能因认证失败、服务不可达等抛出数据库异常。Session提供ORM对象查询与修改跟踪，底层使用Connection；Alembic处理结构操作，直接使用Connection。
+
+外层with在正常结束或异常退出时关闭Connection。当前NullPool策略会同时关闭底层连接；其他连接池策略可能把连接归还池中。连接资源清理不等于提交事务；关闭时尚未结束的事务会被回滚。
+
+`context.configure()`返回None，配置本次迁移上下文。`connection`参数默认None，在线模式传入真实Connection；`target_metadata`默认None，自动生成时传入模型MetaData作为目标。两者分别回答“通过哪个连接访问数据库”和“模型期望什么结构”。`connection=connection`左侧是参数名，右侧是变量引用。
+
+此配置操作不直接执行升级或创建业务表。其后需要运行本次命令对应的操作。当前上下文由Alembic命令建立，通常不把env.py当作普通独立脚本直接运行。
+
+参考：[SQLAlchemy引擎配置](https://docs.sqlalchemy.org/en/20/core/engines.html#sqlalchemy.engine_from_config)、[连接池](https://docs.sqlalchemy.org/en/20/core/pooling.html#sqlalchemy.pool.NullPool)、[Alembic运行环境](https://alembic.sqlalchemy.org/en/latest/api/runtime.html)。
+
+### 事务块与`run_migrations()`
+
+```python
+with context.begin_transaction():
+    context.run_migrations()
+```
+
+`context.begin_transaction()`无需参数，返回供with使用的上下文管理器。在当前PostgreSQL在线模板中，没有外部事务接管时，它为通常的事务性DDL建立事务范围，正常退出提交、异常传播时回滚。DDL指CREATE TABLE、ALTER TABLE等定义结构的SQL；特殊自动提交操作、其他数据库和外部事务不应直接套用此结论。离线模式可输出BEGIN/COMMIT文本而不建立真实事务。
+
+`context.run_migrations()`当前无需参数，返回None，运行当前命令预先安排的操作。`current`安排读取并显示版本，不执行升级脚本；`upgrade head`安排根据当前版本和目标版本依次运行待执行的upgrade函数。方法名不能理解成每次都升级到最新版本。
+
+执行顺序为：外层with获取连接 → configure配置上下文 → 内层with管理事务 → run_migrations执行命令操作 → 内层退出提交或回滚 → 外层退出关闭连接。当前尚未实际验收连接或运行迁移，以上为原理讲解。
+
+异常处理遵循从内到外的退出顺序：若run_migrations内部异常向外传播，先退出事务with并回滚该事务内的操作，再退出连接with关闭Connection；当前NullPool会关闭底层连接。清理不等于吞掉异常，异常通常继续传播并使命令失败。回滚只针对尚未提交且受该事务管理的操作，不会撤销此前已提交的修改。
+
+### 首次连接验收：`current`
+
+在设置了`TASK_MANAGER_DB_PASSWORD`环境变量的终端中，从项目根目录运行：
+
+```powershell
+& "D:\Python\Project\.venv\Scripts\python.exe" -m alembic current
+```
+
+当前项目的database.py在导入时读取该环境变量；如果变量缺失，会先出现KeyError，尚未尝试数据库认证。命令成功、显示PostgreSQL运行日志但没有版本号，可以表示尚未登记迁移版本，并非数据库没有表。验收应同时确认没有异常、进程成功退出；这只验证迁移环境可以查询版本，不代表业务表与ORM完全一致，也不代表已经生成或执行迁移。
+
+### 迁移脚本及版本链
+
+迁移文件的核心结构是：
+
+```python
+revision = "当前版本ID"
+down_revision = "上一个版本ID"
+
+
+def upgrade() -> None:
+    ...
+
+
+def downgrade() -> None:
+    ...
+```
+
+- `revision`唯一标识当前迁移。
+- `down_revision`指向上一个迁移；首个迁移为`None`。
+- `upgrade()`执行向前的结构变化。
+- `downgrade()`描述怎样撤销这一版本的结构变化。
+
+数据库中的`alembic_version`表记录该数据库当前位于哪个版本。Alembic把这个版本与迁移脚本链比较，决定还需执行哪些`upgrade()`或`downgrade()`。
+
+### 当前阶段涉及的常用命令
+
+```powershell
+alembic init alembic
+```
+
+`init`初始化一次迁移环境；后面的`alembic`是目标目录名。它的副作用是创建配置、模板和版本目录，不会直接修改业务表。
+
+```powershell
+alembic revision --autogenerate -m "add task description"
+```
+
+- `revision`创建迁移版本。
+- `--autogenerate`比较真实数据库与`target_metadata`，生成候选操作。
+- `-m`提供迁移说明，用于文件名和脚本头部。
+
+自动生成结果必须人工审查。它能发现许多表、列、可空性、基础外键和约束变化，但不能可靠判断列重命名或表重命名；重命名可能被误判为“删除旧对象并创建新对象”，从而造成数据风险。
+
+```powershell
+alembic upgrade head
+alembic current
+alembic history
+alembic downgrade -1
+```
+
+| 命令 | 作用 |
+| --- | --- |
+| `upgrade head` | 从数据库当前版本依次执行到最新版本，并更新`alembic_version` |
+| `current` | 查看目标数据库当前登记的迁移版本 |
+| `history` | 查看迁移脚本形成的版本链 |
+| `downgrade -1` | 执行当前迁移的`downgrade()`回退一步 |
+
+`downgrade`可能删除列或表。数据库结构可以回退并不代表被删除的数据一定能够恢复，因此它不是绝对安全的撤销按钮。
+
+### 创建文件、执行迁移与登记版本
+
+| 操作 | 结果及副作用 |
+| --- | --- |
+| `revision -m "说明"` | 创建迁移脚本；默认模板和配置下不比较数据库，upgrade/downgrade为空骨架 |
+| `revision --autogenerate -m "说明"` | 连接数据库比较模型，生成候选迁移文件，仍需人工审查 |
+| `upgrade <版本>` | 执行到目标版本所需的升级操作，并更新数据库版本记录 |
+| `stamp <版本>` | 登记数据库版本，不执行升级脚本；必要时建立版本表，不自动验证或修复业务表结构 |
+
+版本脚本存在，不代表数据库已经应用该版本；空白骨架生成也不代表完整基线已建立。对现有数据库stamp之前，必须核对真实结构与该版本一致。全新数据库则需要执行完整基线的建表操作。
+
+本项目首个骨架由`python -m alembic revision -m "create initial task tables"`生成：`042f491f9a4a_create_initial_task_tables.py`。版本标识为042f491f9a4a，down_revision为None；当前函数体仍为pass，尚未执行或登记该版本。
+
+### 阅读首个迁移骨架
+
+文件顶部三引号内容是模块文档字符串，记录说明、版本和生成时间；真正用于组织迁移链的是下面的revision、down_revision等变量。`revision: str`是类型注解，右侧字符串为本版本ID；`down_revision=None`表示没有前驱版本。模板中的`Union[str, Sequence[str], None]`表示允许字符串、字符串序列或None，用于兼容普通迁移及多前驱场景；当前单链保持生成值即可。`branch_labels`为迁移分支命名，`depends_on`声明额外迁移依赖；两者当前均为None，不等于Git分支设置。
+
+`import sqlalchemy as sa`为SQLAlchemy模块起别名；`from alembic import op`导入迁移操作的代理模块，背后是当前环境的Operations对象。context主要用于env.py组织环境，op主要用于迁移脚本描述具体结构操作。
+
+upgrade和downgrade由Alembic在相应命令下调用，返回None；pass只是空语句。创建Python文件不执行函数体，文件也不应通过普通Python脚本运行来代替迁移命令。
+
+### `op.create_table()`：描述并执行建表操作
+
+当前常用形式为`op.create_table(table_name, *columns, schema=None)`，首个参数是表名，后续位置参数是SQLAlchemy Column或约束对象；schema默认None，使用连接的默认schema规则。返回SQLAlchemy Table对象，常规建表迁移可以不接收返回值。在线模式调用时执行建表SQL，离线模式输出SQL；表已存在、权限或约束问题可能导致异常。
+
+最小示例仅用于理解语法，不是项目基础表的最终实现：
+
+```python
+op.create_table(
+    "example_notes",
+    sa.Column("content", sa.Text(), nullable=False),
+)
+```
+
+sa.Text()构造SQL类型描述对象，sa.Column构造列对象；Column的前两个位置参数分别是列名和类型，nullable=False表示NOT NULL（普通非主键列默认通常可空）。Column对象的构造不直接建表，由外层op.create_table执行建表指令。下一步填写真实基础表前，需核对identity、数据库默认值、约束和外键；不直接把当前ORM声明当作现有数据库结构的完整证据。
+
+进一步区分：“描述列”不等于“在数据库中创建列”。例如`column = sa.Column("content", sa.Text(), nullable=False)`只创建内存中的Column对象；把它传给`op.create_table("example_notes", column)`，才由迁移操作创建包含该列的表。给已有表添加列需要使用另外的操作`op.add_column()`，留到后续字段迁移时学习。
+
+参考：[Alembic命令](https://alembic.sqlalchemy.org/en/latest/api/commands.html)、[迁移操作](https://alembic.sqlalchemy.org/en/latest/ops.html#alembic.operations.Operations.create_table)。
+
+### 基础迁移中的自增主键：`sa.Identity()`
+
+2026-10-14只读核对现有数据库：tasks和tags的id均为INTEGER、主键、GENERATED ALWAYS AS IDENTITY；tags.name为TEXT、NOT NULL、UNIQUE。tasks.done的数据库默认值为false，priority为'normal'；task_tags使用联合主键，两个外键均为ON DELETE CASCADE。本次只查询结构，未执行迁移或版本登记。
+
+`sa.Identity()`是SQLAlchemy的自增身份列描述对象，通常作为Column的位置参数传入。当前使用`sa.Identity(always=True)`：always默认False，在PostgreSQL中对应GENERATED BY DEFAULT；True对应GENERATED ALWAYS，普通INSERT不能随意显式指定该列的值。特殊导入覆盖机制以后按需学习。
+
+```python
+sa.Column("id", sa.Integer(), sa.Identity(always=True), primary_key=True)
+```
+
+这里Integer描述SQL整数类型；Identity描述由数据库生成编号的规则；primary_key=True声明主键，保证唯一且非空。Identity本身不保证唯一，序列编号也不保证连续。Identity构造返回Identity对象，不立即连接数据库或生成编号；执行建表操作时规则落入数据库，之后插入行时才实际生成编号。本阶段不需调用Identity对象的其他方法。Column的primary_key和unique默认均为False；为标签name设置unique=True表示该列的值不能重复。
+
+初始核对时ORM的id尚未显式声明Identity，done/priority仅有Python侧default。2026-10-15学习者已补充两张主表的Identity(always=True)和done的server_default；priority默认表达式仍有引号问题待修正。基础迁移和模型均需描述真实数据库规则，不能仅凭Python侧default认为两者完全一致。
+
+2026-10-14练习验收：已在首个迁移的upgrade中编写tags建表操作，id使用Integer、Identity(always=True)、primary_key=True；name使用Text、nullable=False、unique=True。临时离线SQL生成检查通过，输出包含GENERATED ALWAYS AS IDENTITY、PRIMARY KEY (id)、name TEXT NOT NULL和UNIQUE (name)。主键即使没有单独写nullable=False，也在数据库中要求非空。该检查没有连接数据库，证明当前操作能生成预期PostgreSQL DDL，不代表完整迁移已执行或通过数据库往返验证；tasks、task_tags和downgrade仍待完成。
+
+参考：[SQLAlchemy Identity列](https://docs.sqlalchemy.org/en/20/core/defaults.html#identity-columns-generated-always-by-default-as-identity)。
+
+### 迁移中的默认值：`default`与`server_default`
+
+`default`由SQLAlchemy在组织插入时使用，不会在建表SQL中生成数据库DEFAULT规则。当前普通ORM模型的default通常在执行插入时生效，不代表刚构造Python对象就已赋值。`server_default`是Column的关键字参数，默认None；它描述数据库端默认值，在建表时写入表结构。因此从pgAdmin或其他客户端插入并省略该列，也能使用数据库默认值。
+
+本项目迁移的done列需要`server_default=sa.text("false")`，priority列需要`server_default=sa.text("'normal'")`，分别描述SQL中的`DEFAULT false`和`DEFAULT 'normal'`。`sa.text()`接收SQL文本，返回TextClause描述对象，本身不执行SQL；这里由建表操作将描述写入DDL。外层双引号属于Python字符串语法，内层单引号表示SQL字符串字面量；SQL布尔值false不需单引号。
+
+2026-10-14代码检查发现：学习者首次编写tasks时仍用了`default=False`和`default="'normal'"`，尚不满足数据库默认值要求。后者还有另一层问题：default接收Python字符串时不应额外加入SQL引号，否则字符串内容本身包含单引号。Python侧默认字符串写作`default="normal"`；本次迁移应改用前述server_default，而不是仅修改引号。
+
+默认值不等于校验规则：默认normal不限制其他优先级字符串。原始INSERT显式提供NULL时不会使用默认值，本表会因NOT NULL拒绝该值。仅声明或修改Python中的列描述不会自动修改现有数据库，必须通过相应DDL操作落实。
+
+**2026-10-15补充：为什么ORM模型中可以同时保留两种默认值？**
+
+以done为例，`default=False`由SQLAlchemy在组织插入时补值；`server_default=text("false")`描述数据库应具有的DEFAULT规则。经ORM插入且未提供done时，Python侧default可以先提供False，数据库收到明确的值后就无需再使用数据库默认值；在pgAdmin直接执行省略done的INSERT时，不经过Python模型，只能依靠数据库实际存在的DEFAULT false。两者可以同时声明并应保持一致，但并非必须成对使用：对当前固定默认值，只要数据库规则已正确建立，单独使用server_default也能让省略该列的ORM插入由数据库补值。
+
+`server_default`虽然描述数据库层面的规则，代码本身仍写在Python模型中。SQLAlchemy读取mapped_column定义后，将它记录在Base.metadata的表结构描述中；这不是数据库把规则反向通知ORM，也不会自动读取数据库确认声明是否属实。“让模型知道规则”的准确含义是开发者在模型中主动声明该规则。
+
+| 信息所在位置 | 示例 | 信息来源 |
+| --- | --- | --- |
+| PostgreSQL实际表结构 | done DEFAULT false | 已实际执行的建表或修改表SQL |
+| ORM的Base.metadata | server_default=text("false") | Python模型中的列声明 |
+
+这两份信息不会自动同步。本次模型补充server_default是使其描述与数据库已有规则一致；若数据库原本没有默认值，只补Python声明并不能使真实表产生默认值。Alembic可比较元数据与实际结构以辅助生成迁移，但数据库默认值比较需启用compare_server_default（默认False），不能仅凭模型声明认为数据库已正确配置。
+
+后续验收：学习者已修正上述两个迁移参数；临时离线SQL检查确认生成`done BOOLEAN DEFAULT false NOT NULL`和`priority TEXT DEFAULT 'normal' NOT NULL`。此次只验证SQL生成，没有连接数据库或实际创建表。
+
+2026-10-15模型对齐时再次出现`server_default=text("normal")`：text将内容作为SQL表达式保留，normal没有SQL单引号会被视为标识符，而非字符串值；用于PostgreSQL列默认值时不是所需的常量表达式。应写作`server_default=text("'normal'")`，同时保留`default="normal"`。构造描述对象本身通常不会暴露此问题，实际DDL或默认值比较才可能报错；仅修改模型也不会立即改变已存在的正确数据库默认值。
+
+#### `compare_server_default`：把数据库默认值纳入结构比较
+
+它是Alembic的`context.configure()`关键字参数，默认False。本阶段设置True，表示在自动生成迁移或运行check时，将真实数据库的普通列默认值与target_metadata中的server_default进行比较；不比较Python侧default。设置False是跳过这项比较，不会关闭数据库已有默认值，也不会阻止已写好的迁移操作修改默认值。它不是一个单独返回检查结果的函数；configure返回None，该参数配置后续比较行为。
+
+```python
+context.configure(
+    connection=connection,
+    target_metadata=Base.metadata,
+    compare_server_default=True,
+)
+```
+
+connection提供实际数据库结构的来源，target_metadata提供模型目标结构，compare_server_default控制默认值是否纳入比较。配置本身不修改表。
+
+| 实际数据库 | 模型声明 | 开启比较后的含义 |
+| --- | --- | --- |
+| priority DEFAULT 'normal' | server_default=text("'normal'") | 默认值一致，无需产生该项变更 |
+| priority DEFAULT 'normal' | server_default=text("'high'") | 默认值不同，可能生成改为high的候选操作 |
+| done DEFAULT false | 只有default=False，没有server_default | 模型没有数据库默认值，可能生成移除DEFAULT的候选操作 |
+
+第三种情况解释了为什么要先补齐模型描述：模型遗漏不一定被理解成“保留现状”，而可能被当成希望删除数据库规则。Python侧default不会抵消server_default缺失造成的差异。
+
+| 命令 | 发现差异后的行为 |
+| --- | --- |
+| alembic check | 检查是否存在待生成的迁移操作，存在时失败并报告，不生成迁移文件或执行结构变更 |
+| alembic revision --autogenerate | 生成候选迁移文件，必须审查，不立即修改数据库结构 |
+| alembic upgrade head | 执行已有迁移文件中的操作；不会因为开启比较就自动推导并应用模型变更 |
+
+典型流程为“修改模型→比较发现差异→生成并审查迁移→执行迁移→数据库规则改变”。将数据库默认值由normal改为high，通常影响以后省略该列的插入，不自动更新已有行。若Python侧仍保留default="normal"，ORM插入可能继续明确提供normal，因此默认值变更还应检查两层配置是否一致。
+
+默认值可能是SQL表达式，比较不是简单字符串匹配，也并非在所有后端都完全可靠；PostgreSQL在部分情况下会查询求值表达式以判断等价性，所以检查可以访问数据库，复杂表达式需审查检测结果。该参数也支持自定义比较函数，本阶段只使用True/False，不展开回调实现。开启它不表示已验证所有数据库结构或业务行为。
+
+参考：[Alembic配置参数](https://alembic.sqlalchemy.org/en/latest/api/runtime.html#alembic.runtime.environment.EnvironmentContext.configure.params.compare_server_default)、[自动生成与check](https://alembic.sqlalchemy.org/en/latest/autogenerate.html)。
+
+### 迁移中创建中间表及编写回退
+
+task_tags必须在被引用的tasks和tags之后创建。task_id、tag_id均为Integer，分别通过`sa.ForeignKey("tasks.id", ondelete="CASCADE")`和对应的tags.id外键引用现有编号，不设置Identity。ForeignKey构造返回外键描述对象，ondelete默认None；执行建表操作时才落实数据库约束。
+
+两列都设置primary_key=True会形成一个联合主键PRIMARY KEY (task_id, tag_id)，要求组合唯一，不要求每列各自唯一；不额外设置unique=True。主键列默认非空，因此本次实现省略nullable=False也符合要求。删除任务或标签会级联删除对应关联记录，不会借此删除另一侧的标签或任务；删除关联记录也不会反向删除父表记录。
+
+2026-10-14静态检查：学习者已正确编写中间表，两列类型、外键目标、CASCADE、联合主键和建表顺序均符合要求。本轮没有新增运行测试或执行迁移。
+
+下一步编写downgrade：它用于把结构退回前一迁移版本，本次对应移除三张基础表。Alembic的`op.drop_table(table_name, schema=None)`按表名删除表，schema默认None，返回None；在线执行会删除整张表及其数据，离线模式只输出SQL。表不存在、权限不足或被其他表外键引用时可能失败。本项目先移除task_tags，再移除tasks、tags；采用与创建相反的顺序容易维护。ON DELETE CASCADE针对行删除，不等于允许任意顺序DROP TABLE。downgrade不是Session.rollback：前者执行另一次结构变更，不能自动恢复已删除的数据。当前仅编写函数，不对学习数据库执行回退。
+
+2026-10-14后续静态核对：downgrade已按task_tags、tasks、tags顺序编写完成，符合外键依赖。此处确认的是代码顺序正确，尚未实际运行完整升级/回退验证，不能据此认定迁移已经在数据库应用。
+
+### 当前项目的初始迁移策略
+
+2026-10-14完整离线预览：用户执行`alembic upgrade head --sql`生成三表及版本登记SQL；执行`alembic downgrade 042f491f9a4a:base --sql`生成按依赖顺序删表及清除版本记录的SQL。回退截图没有DROP TABLE alembic_version，清除记录后保留空版本表不影响base语义。`起点:终点`为离线回退明确指定范围；BEGIN、COMMIT、版本登记也只是文本，不能据此认定数据库已改变或连接密码正确。
+
+当前`tasks`、`tags`和`task_tags`已手动创建并含有练习数据，尚未执行Alembic版本登记。首个迁移既要能够在全新数据库中创建三张基础表，又不能在现有数据库中重复建表。学习顺序是：初始化环境、连接`Base.metadata`、建立基础结构迁移、核对现有表与基线迁移确实一致后登记基础版本，再新增真实字段并生成第二个迁移。版本登记不会自动修复结构差异；登记前还需核对identity、数据库默认值等细节。现有数据库和数据不会为了练习而删除。
+
+以上已有数据、未登记版本的描述针对原库task_manager_learning。2026-10-15测试库task_manager_migration_test已真实升级到042f491f9a4a，两个数据库的迁移状态必须分别记录。
+
+核心关系是：ORM模型描述目标结构，迁移脚本描述从旧结构到新结构的步骤，`alembic_version`记录某个数据库已经执行到哪里。
+
+### 未登记版本的原库：直接比较结构
+
+原库已有手动创建的表但尚未登记版本，直接运行alembic check可能先报数据库未处于最新迁移版本；不能为了让check通过就先stamp。先使用`MigrationContext.configure(connection, opts={...})`建立比较上下文，再调用`compare_metadata(migration_context, Base.metadata)`比较结构。前者从alembic.migration导入，返回MigrationContext对象；后者从alembic.autogenerate导入，返回差异列表，空列表表示在当前检测范围内没有差异，不表示数据库没有表。
+
+两个函数参数不一定是直接互相比较的对象。compare_metadata的第一个参数提供真实连接、数据库方言及比较规则，函数通过连接读取实际结构；第二个参数提供模型结构。真正比较的是“读取到的数据库结构”和“Base.metadata”，不是上下文对象本身与metadata。opts中compare_type=True启用类型比较，compare_server_default=True启用数据库默认值比较。比较不会执行生成的结构变更或登记迁移版本，但需要真实连接及读取权限，也可能因连接、反射或默认表达式比较而报错，仍受自动检测范围限制。
+
+这里建议变量命名为migration_context。env.py的`from alembic import context`是代理模块，转交给EnvironmentContext；临时检查中的migration_context是MigrationContext.configure返回的实例，两者不是同一个对象。尤其注意：env.py的context.configure返回None，而直接调用MigrationContext.configure返回MigrationContext。
+
+只读检查流程：终端指定原库→连接后开启事务→执行SET TRANSACTION READ ONLY→SELECT current_database()并断言目标是task_manager_learning→建立migration_context→compare_metadata→打印差异→退出事务和连接→finally中dispose。READ ONLY限制该事务普通写操作；assert用于防止对错误数据库的比较结果作出结论。此处只读比较不调用upgrade、downgrade或stamp。差异非空时先分析，不能直接登记版本假装结构一致。
+
+2026-10-15原库接管结果：用户报告原库Database目标正确、Differences为[]，随后stamp 042f491f9a4a、current及check均符合预期。stamp创建或更新版本记录，不运行upgrade；原库无需重复建表。结果依据用户报告，助手未重跑。此后新增业务字段应创建后续迁移，不回写已应用的初始迁移。
+
+### 第二个迁移：任务创建时间
+
+需求是在已有tasks表增加created_at，保留任务记录。模型使用`created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"))`。datetime从Python标准库datetime导入，表示Python时间值；DateTime从SQLAlchemy导入，构造返回数据库类型描述对象。timezone默认False，PostgreSQL下True对应带时区时间戳，保存时间点并按会话时区显示，不保留原始时区名称。本阶段无需调用这两个类型的其他方法。
+
+CURRENT_TIMESTAMP由PostgreSQL在数据库侧求值，表示当前事务开始时间，同一事务中的多行可以相同。新任务插入省略该列时使用默认值；已有任务在新增列时获得迁移事务的时间补充值，不能声称这是真实历史创建时间。本次不额外声明Python侧default，不设置唯一约束。
+
+流程是修改模型→revision --autogenerate→审查新文件→测试库升级和回退验证→原库升级。模型多出列而数据库未升级期间，不运行依赖新模型的ORM查询/API；create_all不会替已有表补列。`alembic revision --autogenerate -m "add task created_at"`连接目标库、比较真实结构与Base.metadata并生成文件，不执行新增列操作。自动生成内容必须审查，不直接认定正确。
+
+本次生成f959d63045e7_add_task_created_at.py，revision为f959d63045e7，down_revision为042f491f9a4a，连接成迁移链。upgrade仅调用`op.add_column("tasks", sa.Column(...))`，downgrade仅调用`op.drop_column("tasks", "created_at")`。add_column的两个必需参数为表名和Column对象；drop_column为表名和列名；两者schema默认None，返回None。在线分别执行ALTER TABLE ADD COLUMN和DROP COLUMN，离线输出SQL。表或列不存在、重复新增、权限不足或约束冲突可能导致失败；DDL也可能等待数据库锁。删除列会丢失其中的时间值，但本迁移不删除任务记录或整张表。
+
+测试先在测试库旧结构插入任务id=1（有用户截图），再upgrade head，验证旧任务原字段保留且created_at非空，以及INSERT只提供title时新任务自动得到时间。current应显示f959d63045e7 (head)，check应报告无新操作。只回退第二版用`downgrade 042f491f9a4a`，不用base；此时保留基础表和任务，只移除created_at，current不再标head，因为迁移文件的最新版本仍是第二版。此时模型仍有新列，暂不运行ORM查询或check。再次upgrade后列恢复，但时间是本次升级补充值，无法恢复回退前已删除的时间。
+
+2026-10-15验收依据：迁移文件经助手静态审查；用户文字确认测试库旧数据/新数据时间验证、current/check、仅回退第二版后任务保留，以及再次升级/check和非空时间均符合预期。此为手动验证，不是新增自动化测试或完整pytest；原库第二版升级尚未完成。
+
+### 选择测试数据库与首次在线迁移
+
+测试目标是在独立空库验证“升级→回退→再次升级”，避免对原库已有表重复建表或删除练习数据。database.py使用`database=os.getenv("TASK_MANAGER_DB_NAME", "task_manager_learning")`选择目标。os.getenv(key, default=None)读取环境变量；存在时返回字符串，不存在时返回default，不创建数据库或连接。设置为空字符串也属于存在，不会使用默认值。密码使用os.environ[...]，缺失时抛KeyError，与数据库名允许默认值的策略不同。
+
+在PowerShell设置`$env:TASK_MANAGER_DB_NAME = "task_manager_migration_test"`后，从该终端启动的新Python进程会继承此值，包括API和Alembic；已有进程不会自动切换。未配置的终端使用原库默认值。环境变量名是配置项，变量值才是目标数据库名。URL.create构造地址不创建目标数据库，数据库不存在时实际连接会失败。
+
+调用链为：终端环境变量→database.py构造database_url→env.py导入并覆盖ini中的连接地址→在线连接目标数据库。因此仅修改alembic.ini不足以改变当前项目的连接目标。当前离线预览也会导入database.py，所以仍要求密码环境变量存在，但不验证密码正确性。
+
+先在pgAdmin的“数据库→创建→数据库…”创建独立空库，不手动创建业务表。随后通过真实连接执行SELECT current_database()确认目标，而非仅打印配置。`connection.execute(text(...))`返回Result；`result.scalar_one()`无参数，要求恰好一行并取其第一列，本例返回数据库名字符串，零行抛NoResultFound、多行抛MultipleResultsFound。with退出归还连接后调用engine.dispose()清理池中空闲连接；它不删除数据库，也不会自动关闭仍被借出的连接。
+
+PowerShell的`@'`与`'@`包围多行文本，管道把文本交给`python -`从标准输入执行，无需新建脚本。此次截图中文提示显示问号，但数据库名正常，查询成功；属于文本编码表现，不是数据库连接失败。
+
+在线执行`alembic upgrade head`没有--sql，会真实运行upgrade并登记版本；head表示迁移链最新版本。随后`alembic current`读取数据库版本，显示042f491f9a4a (head)。版本记录不是完整结构验证，还应检查实际表及约束。pgAdmin在测试库下展开“架构→public→表”，必要时刷新，应看到三张业务表及alembic_version。
+
+2026-10-15证据：用户截图确认真实连接目标为task_manager_migration_test、升级正常结束、current显示042f491f9a4a (head)；用户另行确认pgAdmin四张表、任务列及中间表约束符合预期，助手未收到该结构截图或执行独立结构查询。真实回退与再次升级尚未验证。在线回退可用`alembic downgrade base`，它读取实际当前版本，不必像离线回退那样指定起点；本次会删除测试库三张业务表及其中数据、清除版本记录，不删除数据库本身。回退后current不显示修订号，刷新表列表确认业务表已移除，再重新升级核对恢复。只在确认的专用测试库开展该实验。
+
+参考：[Alembic官方教程](https://alembic.sqlalchemy.org/en/latest/tutorial.html)、[自动生成及限制](https://alembic.sqlalchemy.org/en/latest/autogenerate.html)。
+
 ## pytest共享fixture：`conftest.py`
 
 `conftest.py`是pytest自动加载的本地测试配置文件，可以集中定义多个测试模块需要的fixture。测试通过函数参数请求fixture，不需要`from conftest import ...`。pytest从测试所在模块和目录逐步向上寻找可用fixture；上级目录的fixture可供下级测试使用，兄弟目录专属fixture不会自动互相可见。

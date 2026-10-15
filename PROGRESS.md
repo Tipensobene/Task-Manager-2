@@ -1,6 +1,6 @@
 # 学习进度与阶段路线
 
-> 更新日期：2026-10-13。路线依据本次讨论确认；实现状态依据源码和Git核对。最新pytest验收结果为`49 passed`，项目使用说明见README.md，长期导师规则见AGENTS.md，详细知识笔记见get_knowledge.md。
+> 更新日期：2026-10-15。实现状态依据源码与Git核对；用户报告本次测试库pytest回归结果为`49 passed`，助手未重跑。项目使用说明见README.md，长期导师规则见AGENTS.md，详细知识笔记见get_knowledge.md。
 
 ## 1. 当前继续位置
 
@@ -12,8 +12,8 @@
 - database_api_demo.py已实现列表、详情、创建、部分更新、删除、完成任务；创建和更新支持标签清理、复用及关联。
 - 列表的priority、done、keyword和tag动态过滤已实现并通过隔离测试；数据库统计接口用一条聚合查询返回总数、已完成数和未完成数，混合数据与事务隔离空表场景均已验证。
 - database.py提供Engine、SessionFactory和get_session；orm_models.py提供任务、标签和中间表映射。
-- 正式Task Manager的创建、详情、列表、统计、部分更新、完成与删除接口均已改用Repository、Service和数据库Session，并有事务隔离的正式路由测试；旧依赖清理、README同步、Alembic、旧JSON数据导入、Docker交付及阶段独立验收待完成。
-- 恢复时先让学习者用中文说明列表过滤流程，再根据困难提供适量提示；不重新开始阶段三或重复已完成实验。
+- 正式七个任务接口均已改用Repository、Service和数据库Session，并有事务隔离测试；Alembic两版迁移、原库接管及测试库往返验证已完成，README已补齐迁移运行说明。旧JSON导入、Docker交付及阶段独立验收待完成。
+- 首个迁移及原库基线接管已验收；第二个迁移f959d63045e7通过测试库往返及原库升级验收。用户报告本次测试库回归为49 passed；两库均处第二版。README迁移说明已更新，下一步安排本轮Git变更审阅和提交教学，执行提交仍需明确授权。
 
 ## 2. 学习者背景、目标与时间预算
 
@@ -183,7 +183,7 @@
 | SQLAlchemy ORM / Session | 映射、查询、CRUD与Session实验已完成 | 独立实现基本数据库 CRUD |
 | 事务与 FastAPI 接入 | 提交/回滚实验、依赖注入与演示接口已验证；正式迁移待做 | 多步失败不留下部分修改，原 API 正常 |
 | 标签关系与查询 | 多对多、selectinload、标签创建替换清空已实现并测试 | 创建、更新、查询持久化的任务与标签 |
-| Alembic 结构迁移 | 仅介绍用途 | 检查并执行增加字段等迁移 |
+| Alembic 结构迁移 | 1.20.0已安装、环境已初始化；配置与日志已讲解，连接和迁移尚未验收 | 检查并执行增加字段等迁移 |
 | 旧 JSON 数据导入 | 仅介绍与结构迁移的区别 | 可验证地导入任务和标签 |
 | pytest | 已安装；已学习测试发现、assert、fixture及function作用域、TestClient、yield清理、依赖覆盖、外层事务与SAVEPOINT；数据库创建接口隔离测试已通过 | 隔离测试数据，能自行重跑和解释失败 |
 | Docker 运行交付 | 仅介绍镜像、容器、数据卷、Compose | API 与数据库可按配置启动，数据保留 |
@@ -217,6 +217,56 @@
 未决问题包括：同名标签并发创建竞争、数据库级priority CHECK约束、正式业务规则兼容、响应转换适用范围及持久测试覆盖。按实际整合需要逐项处理，不将全部理论变成进入LLM阶段的门槛。
 
 ### 下一次的具体起点
+
+2026-10-15 Git收尾：用户明确授权按两个提交方案执行。本地功能提交138df49（feat: add Alembic migrations and task timestamps）已完成，包含迁移、模型、依赖、数据库选择及README；同时清除初始迁移文档字符串的一处尾随空格。教学规则、笔记及本进度随独立文档提交保存，完成后以git log和工作区状态核验。未合并、打标签或推送。下一学习项为旧JSON数据导入，先检查现有数据格式、导入范围和重复执行规则，再小步设计；本次不重复运行已由用户确认49 passed的测试。
+
+2026-10-15收尾：用户报告在测试库运行pytest为49 passed，作为本次回归证据记录，不是助手重跑。已补README数据库选择、新库迁移、已有库接管、版本链、时间语义和测试说明。本轮仅修改文档，未运行测试或提交Git。下一步审阅本轮变更并讨论合理提交；旧JSON导入为后续新学习小节。created_at当前仅在存储层，不宣称已加入API响应。
+
+2026-10-15最新验收：用户确认原库第二版升级及current/check、原任务保留、created_at非空均符合预期，依据用户报告。助手本轮读取tests/conftest.py，确认数据库夹具绑定database.engine，以外层事务和create_savepoint隔离并回滚测试写入。下一步终端指定task_manager_migration_test运行python -m pytest -q，验收已有功能回归；此前49 passed仍为历史结果。尚未更新README迁移使用说明或执行Git提交。
+
+2026-10-15当前起点：第二版测试库往返及再次升级后的时间补值和check均由用户确认通过。已合并自上次整理后的原库stamp验收、datetime/DateTime、CURRENT_TIMESTAMP、自动生成迁移、add/drop_column、指定版本回退及时间丢失边界。本轮只核对文件和更新文档，未执行数据库命令或测试。下一步明确切换原库、确认current为042f491f9a4a后执行第二版upgrade，再current/check及GUI核对任务保留和时间补值；原库不做回退实验。
+
+2026-10-15第二迁移测试进展：用户确认测试库upgrade head及旧任务id=1补值、新任务自动记录时间均符合预期，依据文字报告，助手未重跑。下一步由用户在同一测试库终端执行current（预期f959d63045e7 head）和check（预期无新增操作）；之后安排仅回退第二个迁移的验证。原库仍停留初始基线，尚未执行第二迁移。本轮仅源码检查和进度更新，未运行测试或迁移。
+
+2026-10-15第二迁移审查：用户截图显示Detected added column tasks.created_at，文件f959d63045e7_add_task_created_at.py与预期一致，无额外结构变更。已读取源码，未运行迁移或测试。下一步解释add_column/drop_column参数及副作用，并在指定测试库使用原始SQL插入迁移前任务；暂不通过含新字段的ORM访问未升级库。之后才执行测试库升级并验证旧记录保留、时间补值和新任务默认时间，原库暂不升级。
+
+2026-10-15当前静态验收：created_at声明和datetime/DateTime导入符合要求，历史任务时间只能补迁移事务时间的边界已讲解。版本目录仅有初始迁移；本轮未运行测试或连接数据库。下一步讲解revision --autogenerate调用链，由用户指定测试库运行revision --autogenerate -m "add task created_at"，只生成文件不升级；审查后再验证，原库暂不执行新迁移。
+
+2026-10-15最新结果：用户确认原库stamp 042f491f9a4a、current显示head、check无待迁移操作，基线接管完成。下一步导入datetime/DateTime并解释时区时间列及CURRENT_TIMESTAMP，先确认历史任务时间不可还原的边界，再安排模型修改、自动生成迁移、审查及测试库验证。初始迁移保留为历史版本，不回写新增列。本轮未运行数据库命令或测试。
+
+2026-10-15当前任务：已讲解stamp只登记版本、不核对或修复结构；学习者理解compare_metadata空列表的含义。已将MigrationContext与env.py代理context的区别、比较参数职责及只读检查流程合并进知识文档。下一步由学习者运行此前临时检查代码，局部变量统一用migration_context，目标原库task_manager_learning；期待Database正确且Differences: []。原库比较尚未执行确认，禁止提前stamp。本轮仅文档更新，未连接数据库或运行测试。
+
+2026-10-15最新结果：用户报告测试库alembic check输出No new upgrade operations detected；这是用户执行的结构比较，不是助手重跑或完整pytest结果。测试库流程完成到自动差异检查；原库task_manager_learning的结构比较及stamp尚未进行。下一步先解释已有库为何使用stamp而非重复upgrade，确认理解后安排原库只读结构核对；不得先登记版本再以check代替登记前核对。
+
+2026-10-15当前静态验收：priority已改为server_default=text("'normal'")，本轮模型修正通过。尚未运行测试或连接数据库。下一步由学习者在run_migrations_online的context.configure中添加compare_server_default=True，再在指定测试库的终端运行alembic check。需先解释check比较实际结构与metadata、不生成文件或修改表、存在自动比较局限；结果待用户执行后核对。
+
+2026-10-15本次静态验收：两处Identity(always=True)、done的server_default及保留Python侧default均正确；priority的server_default=text("normal")缺少SQL字符串单引号，应为text("'normal'")。已将本次错误合并进默认值知识章节，未代写源码、未运行测试或连接数据库。下一步由学习者修正这一处，随后启用数据库默认值比较并学习结构差异检查。
+
+2026-10-15最新进度：测试库回退截图显示downgrade成功、current无版本号；用户随后确认再次升级/current及三张业务表恢复均符合预期。此为用户手动验证，不是新增自动化测试，助手本轮未连接数据库。源码核对发现TaskRecord/TagRecord的id仍未声明Identity，done/priority仍仅有Python侧default。下一步先讲解模型与真实结构对齐的原因，用小问题确认后再安排局部修改；不得把迁移往返成功等同于原库基线已登记。
+
+2026-10-15当前起点：已将数据库选择、终端环境变量作用范围、真实连接目标查询、scalar_one、资源清理及在线迁移验收合并到学习文档。证据为用户连接/升级/current截图及GUI结构符合预期的文字确认，助手本轮仅核对源码和更新文档，未运行测试或迁移。下一步在明确指定的测试库执行downgrade base，检查版本清空和业务表移除，再upgrade head确认重建；原库数据不参与此实验。
+
+以下为历史过程记录，当时的“下一步”和状态由上方当前起点取代。
+
+2026-10-14当前起点：两次用户截图分别确认upgrade head --sql及downgrade 042f491f9a4a:base --sql正常输出。回退输出删除三表及版本记录，未删除版本表；离线验收通过不代表真实数据库变化。本轮核对database.py仍固定连接task_manager_learning，env.py从它导入database_url并覆盖ini连接地址。下一步先讲解os.getenv读取数据库名的方案，检查理解后由学习者修改；尚未创建测试库、修改连接代码或运行在线迁移。
+
+2026-10-14最新静态核对：downgrade按task_tags、tasks、tags顺序调用drop_table，符合外键依赖关系。回退原理已合并到学习文档，未代写源码、未运行测试或实际回退。下一步先讲解`alembic upgrade head --sql`的调用链与只生成SQL的边界，再由学习者执行离线预览；当前env.py导入database.py，离线也需要已有密码环境变量。完整在线隔离验证、模型元数据对齐和基线登记仍待完成。
+
+2026-10-14最新检查：task_tags的两列、外键目标、ON DELETE CASCADE、联合主键及创建顺序均正确；省略nullable=False不影响主键非空规则。本轮仅静态检查和知识整理，未运行测试、未修改迁移源码。下一步讲解op.drop_table后由学习者编写downgrade，先task_tags，再tasks和tags；只编写，不对当前数据库执行回退。之后仍需完整基线验证及ORM元数据对齐。
+
+2026-10-14当前验收：学习者已将tasks的两个默认值修正为server_default。临时离线PostgreSQL SQL生成断言通过，覆盖两张表、两列Identity、title非空、done DEFAULT false、priority DEFAULT 'normal'及标签唯一约束。未连接数据库、未运行pytest或真实迁移，未修改学习者代码。下一步在两张父表之后编写task_tags，使用联合主键及两个ON DELETE CASCADE外键；downgrade留待下一小步。
+
+2026-10-14增量：tags建表部分已由学习者实现，代码核对及临时离线SQL断言通过，覆盖Identity ALWAYS、主键、name非空与唯一约束。知识合并到现有Identity章节，未代写迁移代码、未连接数据库、未运行pytest、未执行upgrade或stamp。此前只读核对已确认三表真实结构。下一步先讲解server_default与Python侧default的区别，再由学习者填写tasks；仍需完成task_tags、downgrade、ORM元数据对齐及完整基线验证。
+
+2026-10-14 首个迁移骨架核对：文件042f491f9a4a_create_initial_task_tables.py已生成，revision正确、down_revision/branch_labels/depends_on为None，upgrade/downgrade均为pass。已把revision/upgrade/stamp区别、版本标识、op与context区别和create_table局部示例整理进知识文档。本轮仅文件核对与文档更新，未运行迁移。继续讲解骨架与建表API，随后读取真实数据库结构，核对identity、默认值和约束，再让学习者小步填写；不对现有业务表直接执行空骨架或重复建表。
+
+2026-10-14 context知识整理与连接验收：将代理模块、EnvironmentContext/MigrationContext职责、常用方法，以及set_main_option修改配置和configure配置迁移环境的区别合并进知识文档。首次current因缺少TASK_MANAGER_DB_PASSWORD而在导入database.py时抛KeyError；学习者在同一PowerShell设置变量后，截图显示PostgresqlImpl与事务DDL日志并正常返回提示符，没有版本号。证据来自用户截图，助手本轮未重跑。versions目录仍为空；下一步通过普通revision创建空白基线骨架，先讲解再填写并审查，禁止把空骨架直接当作完成的基线登记。
+
+2026-10-14 事务与配置补充：学习者能解释异常时先回滚内层事务、再关闭外层连接。已将异常继续传播、回滚范围、str.replace参数与返回值、URL编码和ConfigParser百分号转义合并进已有知识章节。只读核对env.py确认百分号转义已补齐，本轮仅修改文档；下一步由学习者在已设置数据库密码环境变量的终端运行alembic current，并提交输出供验收，暂不创建或执行基线迁移。
+
+2026-10-14 Alembic执行流程增量整理：将在线/离线分支、get_section、engine_from_config、NullPool、Engine.connect、连接清理与事务提交的区别，以及configure参数合并到已有知识章节，并补充本轮事务块与run_migrations讲解。学习者能够解释metadata赋值不会改表、Engine创建成功不证明数据库可达。源码已接入URL和metadata但尚未验证；下一步检查对事务和命令分派的理解，再补足URL百分号转义、验收alembic current。此次仅更新文档，无数据库操作或测试。
+
+2026-10-14 Alembic文档整理：保留已有Base.metadata笔记，将入门、INI语法、路径基准、Config对象与方法、current的含义、日志配置和target_metadata逐段说明合并到get_knowledge.md。纠正“所有命令都会运行env.py”、current查看结构及URL百分号转义的表述；长期教学规范补充以实际执行链展开讲解。已安装和初始化的依据为此前工具结果及本轮源码核对；env.py仍为模板，未执行数据库连接验收或迁移。侧边栏临时对话原文不可访问，仅整理了本对话和现有笔记可见内容，未纳入文档的临时对话需用户补充。下一步讲解target_metadata，随后继续连接创建与事务，理解后再由学习者配置env.py。
 
 2026-10-13 Git阶段检查点：在进入Alembic前清理了长期混杂的暂存状态，并按职责形成三个本地提交：`2a2d080 chore: organize database learning examples`、`a68ace5 feat: migrate task API to PostgreSQL`、`0b73591 docs: update database learning progress`。提交前完整套件实际结果为`49 passed in 0.84s`，代码空白检查和文档敏感信息检查通过；未执行push。下一步开始Alembic数据库结构迁移导学与实操。
 

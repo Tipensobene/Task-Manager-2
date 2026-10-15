@@ -43,6 +43,7 @@ Task Manager 4.0 是一个使用 Python、FastAPI、SQLAlchemy 和 PostgreSQL �
 | requests | Python HTTP 客户端示例 |
 | SQLAlchemy | ORM 映射、数据库查询与事务操作 |
 | PostgreSQL | 正式 Web API 的数据持久化 |
+| Alembic | 数据库结构迁移与版本管理 |
 | Psycopg | SQLAlchemy 使用的 PostgreSQL 驱动 |
 | pytest | 自动化测试与数据库测试隔离 |
 | dataclass / JSON | 保留的旧 CLI 模型与存储方式 |
@@ -57,6 +58,8 @@ Task_Managers_2/
 ├── task_repository.py # SQLAlchemy 数据访问层
 ├── database.py       # Engine、Session 工厂与 FastAPI 数据库依赖
 ├── orm_models.py     # tasks、tags 与关联表的 ORM 映射
+├── alembic.ini       # Alembic 配置
+├── alembic/          # 迁移环境及版本脚本
 ├── client_demo.py    # 使用 requests 调用 API 的客户端示例
 ├── main.py           # Task Manager 2.0 命令行入口
 ├── models.py         # 内部 Task 数据模型
@@ -108,15 +111,16 @@ python -m pip install -r requirements.txt
 
 ## 运行 Web API
 
-正式 API 连接本机 PostgreSQL 的 `task_manager_learning` 数据库。启动前先在当前 PowerShell 会话设置数据库密码环境变量：
+正式 API 默认连接本机 PostgreSQL 的 `task_manager_learning` 数据库，用户为postgres、端口5432。启动前先在当前 PowerShell 会话设置数据库密码和目标数据库名：
 
 ```powershell
 $env:TASK_MANAGER_DB_PASSWORD = "你的数据库密码"
+$env:TASK_MANAGER_DB_NAME = "task_manager_learning"
 ```
 
 该变量只对当前 PowerShell 会话及其启动的子进程有效。不要把真实密码写入源码或提交到 Git。
 
-然后在项目根目录执行：
+数据库名变量未设置时默认为task_manager_learning；API、测试与Alembic均使用此配置。目标数据库需要预先创建，首次运行请先按下节完成结构初始化。确认目标库后，在项目根目录执行：
 
 ```powershell
 python -m uvicorn api:app --reload
@@ -133,6 +137,36 @@ python -m uvicorn api:app --reload
 - API 基础地址：`http://127.0.0.1:8000`
 - Swagger UI：`http://127.0.0.1:8000/docs`
 - OpenAPI 文档：`http://127.0.0.1:8000/openapi.json`
+
+## 数据库结构迁移
+
+先在pgAdmin创建目标空数据库，名称与TASK_MANAGER_DB_NAME一致；Alembic不创建数据库本身。全新空库在设置连接环境变量后执行：
+
+```powershell
+python -m alembic upgrade head
+python -m alembic current
+python -m alembic check
+```
+
+当前最新版本为f959d63045e7，前驱042f491f9a4a创建三张业务表，第二版增加tasks.created_at。current应显示最新版本及head，check应输出No new upgrade operations detected。check只检查自动比较支持范围内的差异；env.py已启用数据库默认值比较。
+
+已有手动建表数据库不能直接套用全新空库流程。先只读核对其真实结构与对应基线一致，再使用`python -m alembic stamp 042f491f9a4a`登记初始版本，之后upgrade head。stamp只写版本记录，不核对、修复结构或执行建表；已经登记过版本的数据库无需重复stamp。
+
+后续修改模型后，可运行`python -m alembic revision --autogenerate -m "变更说明"`生成迁移，人工审查后先在专用测试库验证，再应用到实际使用库。生成文件不等于已经升级，历史已应用迁移不回写。`upgrade head --sql`只生成SQL文本。
+
+回退命令会执行对应downgrade，可能删除列、表及其数据；日常运行不需要回退。本项目的回退验证在task_manager_migration_test中进行，原库仅升级。created_at使用带时区时间戳和CURRENT_TIMESTAMP默认值；旧记录补迁移事务时间，不能据此恢复真实历史创建时间。当前API响应尚未增加该字段。
+
+## 自动化测试
+
+先创建并迁移独立测试库，在设置密码的同一终端执行：
+
+```powershell
+$env:TASK_MANAGER_DB_NAME = "task_manager_migration_test"
+python -m alembic upgrade head
+python -m pytest -q
+```
+
+数据库测试使用外层事务和保存点隔离，结束后回滚测试写入；PostgreSQL序列编号仍可能前进。运行API前请显式把数据库名切换回预期目标，环境变量的值会被同一终端启动的新进程继承。
 
 ## API 接口
 
@@ -320,7 +354,7 @@ CLI 仍使用旧的 `TaskManager`、数据模型和 JSON 文件；它与正式 W
 
 | 表 | 作用 |
 | --- | --- |
-| `tasks` | 保存任务的标题、完成状态和优先级 |
+| `tasks` | 保存任务的标题、完成状态、优先级和创建时间 |
 | `tags` | 保存唯一的规范化标签名称 |
 | `task_tags` | 通过 `task_id` 和 `tag_id` 表示任务与标签的多对多关系 |
 
@@ -336,6 +370,6 @@ ID 表示任务身份，不是任务在 Python 列表中的位置。
 
 ## 后续规划与学习记录
 
-PostgreSQL、SQLAlchemy ORM 和事务隔离自动化测试已经接入正式 API。阶段四后续将加入 Alembic 数据库结构迁移、旧 JSON 数据导入、Docker 运行配置和独立重建验收。
+PostgreSQL、SQLAlchemy ORM、Alembic结构迁移和事务隔离自动化测试已经接入。阶段四后续将推进旧 JSON 数据导入、Docker 运行配置和独立重建验收。
 
 已完成阶段、知识点大纲、验收记录及当前学习进度统一记录在 [PROGRESS.md](PROGRESS.md)。导师教学方式与操作约束见 [AGENTS.md](AGENTS.md)。本文件继续作为项目功能、接口与运行方式的说明。

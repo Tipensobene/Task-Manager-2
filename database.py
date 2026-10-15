@@ -14,7 +14,10 @@ database_url=URL.create(
     password=database_password,
     host="localhost",
     port=5432,
-    database="task_manager_learning",
+    database=os.getenv(
+        "TASK_MANAGER_DB_NAME",
+        "task_manager_learning",
+    ),
 )
 
 engine = create_engine(database_url)

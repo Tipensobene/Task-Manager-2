@@ -595,6 +595,80 @@ PowerShell的`@'`与`'@`包围多行文本，管道把文本交给`python -`从�
 
 参考：[Alembic官方教程](https://alembic.sqlalchemy.org/en/latest/tutorial.html)、[自动生成及限制](https://alembic.sqlalchemy.org/en/latest/autogenerate.html)。
 
+## 旧JSON导入：类型转换与严格校验
+
+JSON导入与Alembic职责不同：前者搬业务数据，后者管理表结构。导入计划先读取并校验整批，再在同一事务创建任务和关联，全部成功才提交；任意一条失败则整批回滚。保留标题、完成状态、优先级和标签，由数据库生成新ID并记录旧新对应；原文件不修改。第一版拟拒绝向已有任务的目标库导入，标签可复用；重复执行和非空目标拒绝的实现、测试尚待完成。
+
+校验不是必然转换。bool("false")为True（非空字符串），bool(0)为False，但严格布尔字段会拒绝字符串"false"和整数0。即使Python中bool是int的子类，严格布尔校验也只接受布尔值。JSON的false/true经json.load解析为Python的False/True，带引号的"false"仍是字符串。缺失done由导入校验模型补False，不要求等到数据库补值；显式null、数字、字符串则拒绝。缺失字段与显式错误值必须区别处理。旧Task.from_dict只是组装dataclass，类型注解本身不完整校验输入，因此不能直接认为读出的任务可信。
+
+Pydantic普通bool字段可能转换输入；本次可声明`done: bool = Field(default=False, strict=True)`：Field返回字段配置对象，default指定缺失时的值，strict=True要求该字段严格类型，省略strict时遵循模型配置（默认通常允许转换）。校验成功后的done仍是普通bool，不是Field对象。通过BaseModel的model_validate(dict)执行校验并返回模型实例；类型错误抛ValidationError。该字段配置只作用于导入模型，不改变现有API的布尔查询参数行为。
+
+title使用严格字符串及min_length=1、max_length=100，并通过模型ConfigDict(str_strip_whitespace=True)先清理首尾空白；空白标题清理后不满足长度要求。id使用`id: int = Field(strict=True, gt=0)`，无默认值表示必填；gt是greater than，限制数值大于边界。min_length检查字符串、列表等的长度，不适用于整数，不能把“正整数”写成min_length=1。严格整数校验拒绝字符串"3"、浮点数3.0和布尔值True，即使Python的bool是int子类。旧id仅供源记录识别和新旧映射，不直接写入数据库identity列。学习者已移除id误用的min_length；截至2026-10-17，模型正常输入、默认值及非法done/id测试通过，其他字段错误边界仍待补齐。
+
+### 导入校验模型的职责与执行顺序
+
+legacy_import.py当前只有LegacyTaskInput校验模型，不代表读取文件、整批导入和数据库事务已实现。database_api_demo.py校验HTTP客户端输入，导入程序处理旧JSON，两者数据入口不同。JSON读取成功只证明语法能解析，不保证字段类型或业务值合法。数据库的非空、唯一、外键约束也不能替代全部输入规则，例如普通TEXT优先级列不会自动限制low/normal/high。之后写入流程可复用Service/Repository，但校验模型本身不连接数据库。
+
+LegacyTaskInput表示经过校验的旧记录，TaskRecord是数据库ORM模型；前者包含源ID，后者使用数据库生成的新ID。原始字典与校验返回对象的区别见下方model_validate章节。
+
+priority使用严格str、default="normal"，after验证器将值转小写并校验low/normal/high；空白或非法文本抛ValueError，非字符串在进入after之前即被类型校验拒绝。`@field_validator("priority", mode="after")`注册规则，after为默认模式，函数接收已通过字段基础校验的值，必须返回最终值；遗漏return会隐式返回None。ValueError由Pydantic汇总为ValidationError。普通默认配置不会自动验证字段默认值，本次默认normal本身已合法。
+
+tags使用`list[StrictStr] = Field(default_factory=list, strict=True)`：外层strict要求列表，内层StrictStr要求每个元素是字符串，外层严格模式不自动递归到元素。StrictStr是严格字符串类型标注，校验成功的元素仍是普通str。default_factory=list在字段缺失时创建独立空列表。模型配置先清理字符串元素首尾空白，after验证器再转小写、拒绝空字符串并保留首次出现的顺序去重。例如[" SQL ", "Python", "sql"]得到["sql", "python"]；不使用无序去重改变输出顺序。
+
+### 模型测试：目前验证到了哪里
+
+tests/test_legacy_import.py直接调用模型校验，不请求HTTP接口，也不需要数据库fixture。正常输入测试覆盖五个字段结果；只提供id/title的默认值测试断言done is False、priority为normal、tags为空列表。曾将done误断言为True导致失败，实际模型返回False符合需求：应修正测试预期，不能为了让测试通过而改变正确默认值。
+
+非法值测试复用已有parametrize和pytest.raises知识：done参数为["false", 0, 1, None]，id参数为[0, -1, "3", 3.0, True, None]。每次只改变目标字段，其他必填值保持合法，避免无关字段错误让测试误通过；raises块只包model_validate调用。两项普通测试加4项done和6项id案例，共12项。异常测试预期不返回正常实例，因此无需接收返回值，也不必再写普通assert。
+
+运行`python -m pytest --noconftest tests/test_legacy_import.py -q`只执行这个文件，--noconftest不加载conftest.py，-q精简输出。当前文件是纯模型测试，跳过conftest可避免数据库配置导入，因此无需密码或数据库连接；这不是完整套件的通用运行替代方案，依赖conftest夹具的测试不能这样运行。2026-10-17助手实际运行结果为12 passed；不等于已经测试JSON读取、数据库导入或完成当前版本全套回归。
+
+### 导入结果的ID对照、集合及标签查询
+
+id_mapping保存实际整数旧ID→数据库新ID，例如{3:101, 8:102}，不是字符串"old_task.id"。循环前创建{}，每创建一条任务记录`id_mapping[old_task.id] = new_task.id`，循环外flush并return；字典赋值只改内存映射，不修改数据库ID，return放循环内会提前结束导入。每条单独commit后，外层rollback不能撤销已提交行，所以导入函数只flush，由调用者统一管理事务。
+
+set是Python内置集合类型，set(iterable)构造不含重复元素的集合，不修改原容器，不保证保留输入顺序，也不能按下标读取，元素须可哈希；set()创建空集合，{}是空字典。直接遍历字典默认得到键，因此set(mapping)相当于set(mapping.keys())，断言它等于{3,8}检查旧ID键没有缺漏或多余。mapping.values()返回字典值视图；set(mapping.values())对新ID去重，再len检查不同新ID数量。例如{3:101,8:101}的键断言通过，但不同值数量只有1，不能代表两条新任务。
+
+成功导入测试的`session.scalars(select(TagRecord).where(TagRecord.name == "pytest-legacy-shared")).all()`先构造整模型查询和SQL筛选条件，由scalars执行并返回ScalarResult，再由all取出TagRecord实例列表，无匹配为[]。不是只取id：SELECT的结果项是整个模型。检查结果长度为1，再比较两条任务关联的标签ID，证明共享同一条标签记录，而不只名称相同。
+
+enumerate(source_ids, start=0)是Python内置函数，返回迭代器，每次产生(位置编号, 元素值)，不修改原列表。测试中对[3,8,3]产生(0,3)、(1,8)、(2,3)，分别用值作旧ID、编号生成不同标题；相邻与非相邻重复ID测试据此只针对ID冲突。
+
+### argparse命令行参数入口
+
+argparse是Python标准库，用于把启动命令中的参数解析成Python属性。流程为启动命令→ArgumentParser→add_argument登记规则→parse_args读取参数→args.file_path取得路径；本阶段main仅打印路径，不执行导入。ArgumentParser(description=...)创建解析器，description默认None，add_help默认True提供-h/--help。add_argument("file_path", type=Path, help=...)登记必填位置参数，返回参数配置对象，当前不接收；type未指定通常保留字符串。parse_args(args=None)默认读取sys.argv[1:]，返回Namespace；缺参数通常抛SystemExit(2)，--help输出帮助并SystemExit(0)。其余可选接口按需学习。
+
+关键区别："file_path"是参数名称，不是待转换的路径文本。执行python legacy_import.py data/tasks.json时，type=Path将实际输入"data/tasks.json"转为Path对象，结果通过args.file_path取得，相当于args.file_path=Path("data/tasks.json")。改登记名为source后访问args.source，命令本身的位置输入仍可相同。路径构造不创建文件、不检查存在性；相对路径按运行时工作目录解释。if __name__ == "__main__"只在直接运行模块时调用main，测试导入模块不自动执行入口。
+
+2026-10-18入口静态验收及三个测试通过：提供路径时打印正确且不创建文件；缺路径以2退出并报参数名；--help以0退出并显示帮助。monkeypatch临时替换sys.argv（列表首项为程序名，后续为用户输入）；capsys是pytest内置输出捕获fixture，readouterr()无参返回带out/err字符串的结果并清空本次捕获缓冲，分别检查标准输出和错误输出。pytest.raises(SystemExit) as error取得异常信息，error.value.code读取退出状态。当前仅跑无数据库测试文件52 passed，不能称为完整套件或最新全部导入测试结果。
+
+### 文件导入事务与monkeypatch失败模拟
+
+import_legacy_file先load_legacy_tasks校验完整文件，再在函数内导入SessionFactory，用`with SessionFactory.begin() as session`调用import_legacy_tasks，正常退出提交并关闭会话，异常退出回滚并关闭会话，退出成功后返回ID对照。函数内导入避免仅使用输入模型时就读取数据库密码配置。单纯with SessionFactory()只管理会话关闭，不自动提交；不在begin块内逐条commit或吞掉异常，确保整批事务边界有效。
+
+test_import_file_rolls_back_partial_batch的目标不是再测非法源数据，而是模拟合法数据在写入中途发生运行错误。tmp_path准备两条合法JSON记录，import_file_session准备事务隔离和空任务目标；测试开始先查询专用标签，确认原本不存在，避免将已有标签误判为本轮残留。
+
+`original_create = TaskService.create_task`没有括号，保存原方法引用，不立即执行。随后创建created_ids空列表，内部函数fail_on_second通过闭包读取并append这个外层列表。第一次调用列表为空，使用`original_create(service, title=..., priority=..., tags=...)`执行真实创建，记录返回任务ID并return任务。原方法是从类上取得的函数，所以显式传入service作为self。第二次调用列表非空，先get第一条任务，再raise指定RuntimeError，不执行第二条真实创建。标题写“触发模拟失败”只是便于阅读，失败由替代函数决定，并非标题非法。
+
+pytest内置monkeypatch fixture提供`setattr(target, name, value, raising=True)`，当前用`monkeypatch.setattr(TaskService, "create_task", fail_on_second)`临时替换类属性，返回None；默认属性不存在时抛AttributeError。被替换的是类上的方法，既有和新建实例通过该类属性查找时均受影响，不限于某一实例或一次调用。已预先保存的original_create仍指向原方法；其他事先保存的方法引用也不自动改指向替代函数。
+
+替换从setattr执行后开始生效，默认持续到当前函数级monkeypatch fixture清理时恢复；不是测试一开始就生效，也不随内部辅助函数或with块结束而撤销。测试正常完成或失败后，pytest正常清理都会恢复。替换可调用多次、可覆盖多个属性；无参数undo()返回None，提前撤销该monkeypatch对象记录的全部修改，不只最后一项。本测试同时替换Session工厂和create_task，不在中途随意undo。第一次成功、第二次失败是fail_on_second依据created_ids决定，不是monkeypatch自带计次或“一次性替换”功能。
+
+`with pytest.raises(RuntimeError, match=...)`包住整个import_legacy_file调用，异常先传出函数内部的事务with，触发回滚，再由pytest接收。不能在事务块内部捕获后正常退出，否则可能提交前面已完成的操作。异常之后expire_all再查任务表与专用标签，应均为空；created_ids仍有一个元素，证明第一条执行过，普通Python列表不会随数据库回滚而清空。只靠Session.get断言非None不保证发出查询，因为可能命中身份映射；本例第一条已flush依据真实create_task内部的Repository.flush，再结合外部查询检查回滚结果。
+
+测试工厂绑定已有测试Connection并使用create_savepoint，让入口函数的提交/回滚仅作用于保存点，最外层夹具最终回滚恢复测试前数据。事务内清空任务仅用于测试准备，业务导入函数仍必须拒绝非空目标，不能清库腾位置。2026-10-18导入专项53 passed覆盖成功路径、重复拒绝与中途失败回滚，不等于正式执行真实JSON导入或完成全套回归。
+
+### 读取JSON与临时文件测试
+
+load_legacy_tasks(file_path: Path)返回list[LegacyTaskInput]：UTF-8只读打开文件，json.load解析，检查顶层为list，逐项model_validate并收集返回实例。Path是路径表示，open返回文件对象，两者不同。json.load只负责语法解析，不保证列表结构或字段合法；[]应返回[]。当前文件不存在、JSON语法错误和模型验证错误原样传播，不将读取失败伪装成空数据。函数不写原文件或数据库。完整正常记录和错误文件测试仍待补齐。
+
+tmp_path是pytest内置的函数级fixture，通过测试参数名请求，不需自行定义或导入，pytest为每个测试用例提供独立临时目录的pathlib.Path对象；参数化展开的每个用例也分别获得目录。`file_path = tmp_path / "tasks.json"`拼接出路径，不创建文件；随后用open(file_path, "w", encoding="utf-8")和json.dump准备测试文件，退出with关闭文件后，再调用读取函数。
+
+必须区分fixture作用域、内存对象和磁盘目录：函数级表示每个用例独立准备和管理该fixture，不等于函数结束马上删除目录。局部变量名在函数外不可访问，Path对象无其他引用时可回收，但回收路径对象不删除磁盘目录；构造Path本身也不会创建目录。pytest默认保留最近3次运行的临时目录供排查，随后按保留配置清理。文件对象关闭仅释放打开资源，不删除文件，所以读取函数可以重新打开它。测试无需使用真实data/tasks.json，也无需手动删除临时目录。
+
+本次空文件列表测试流程是：pytest准备临时目录→写入JSON []→关闭写文件→load_legacy_tasks重新打开解析→断言返回[]。2026-10-17实际独立测试文件37 passed，其中新增一项空JSON列表读取；此结果不代表正常多记录读取、错误文件或数据库导入已经验证。
+
+参考：[pytest临时目录说明](https://docs.pytest.org/en/stable/how-to/tmp_path.html)。
+
 ## pytest共享fixture：`conftest.py`
 
 `conftest.py`是pytest自动加载的本地测试配置文件，可以集中定义多个测试模块需要的fixture。测试通过函数参数请求fixture，不需要`from conftest import ...`。pytest从测试所在模块和目录逐步向上寻找可用fixture；上级目录的fixture可供下级测试使用，兄弟目录专属fixture不会自动互相可见。
@@ -2040,6 +2114,23 @@ task = session.get(
 
 适用场景：已知主键，只查询一条对象。非主键条件应使用 `select()`。
 
+#### 身份映射命中不等于重新查询数据库
+
+Session以“模型类型+主键”识别已经管理的对象。get在通常情况下先检查身份映射：存在可直接使用、未过期的对象时可以直接返回；不存在或需要重新加载时才查询数据库。因此get返回对象不能单独证明本次发出了SELECT。对象是否仍被引用、是否过期，以及populate_existing等选项也会影响行为，不应把Session理解为永久保存所有查询结果的缓存。
+
+```python
+task = TaskRecord(title="任务A")  # 只构造Python对象
+session.add(task)               # 登记待插入对象，通常尚未执行INSERT
+session.flush()                 # 执行INSERT，数据库生成主键，但没有commit
+task_id = task.id
+found = session.get(TaskRecord, task_id)
+assert found is task           # 当前对象仍被引用且未过期，可以直接复用
+```
+
+假设task_id为101，可理解为Session记住“TaskRecord+101→task”。后面的get可能直接沿此对应关系返回task，无需新的SELECT。flush发送的是插入/更新等操作，get可能发送的是查询，两种SQL不能混为一谈。
+
+导入回滚测试在第二条模拟失败前使用`session.get(TaskRecord, created_ids[0]) is not None`，只能说明当前Session能够取得第一条任务对象，不是独立的“确实查询到数据库行”证据。第一条INSERT已经发送的依据是：original_create调用真实TaskService.create_task，后者调用TaskRepository.add_task，其中明确执行session.add和session.flush并成功返回。INSERT发生在当前事务内，不代表commit；随后异常仍能使其回滚。若需要确认是否执行查询，应观察SQL日志或采用明确的重读/数据库检查，不单靠get返回非None推断。
+
 ---
 
 ### `session.execute()`：执行语句并保留完整行结构
@@ -2305,6 +2396,24 @@ task = session.scalar(statement)
 ```python
 task = session.scalars(statement).one()
 ```
+
+#### 标签示例：单列值与整个ORM对象
+
+假设tags有两行：(1, "python")、(2, "sql")。先按id排序以确定示例结果：
+
+```python
+names_query = select(TagRecord.name).order_by(TagRecord.id)
+name = session.scalar(names_query)              # "python"
+names = session.scalars(names_query).all()      # ["python", "sql"]
+
+tags_query = select(TagRecord).order_by(TagRecord.id)
+tag = session.scalar(tags_query)                # 第一条TagRecord对象
+tags = session.scalars(tags_query).all()        # 两个TagRecord对象组成的列表
+```
+
+“第一个结果元素”由select选择的内容决定，不是固定取数据库第一列id。select(TagRecord.name)选择字符串值；select(TagRecord)选择整个模型对象，因此scalar可返回对象，scalars也可返回一组对象。scalars本身返回ScalarResult容器，不是列表，调用all后才收集结果；无匹配时all返回[]，scalar返回None。每行若选择多个结果项，scalar/scalars仅保留第一个结果项，需要完整行应使用execute。
+
+导入回滚测试中的`session.scalar(select(TagRecord).where(TagRecord.name == tag_name)) is None`检查指定标签不存在；若存在，则返回一个TagRecord对象。scalar即使遇到多行也只取首行，不验证唯一性。要求“最多一行”时使用`session.scalars(statement).one_or_none()`：零行返回None，一行返回该项，多行抛MultipleResultsFound；它与要求恰好一行的one不同。
 
 三者对比：
 
@@ -2698,6 +2807,8 @@ session.expire_all()
 
 `expire()` 通常不会立刻查询；下一次访问过期属性时才重新加载。对比：
 
+expire_all无参数，返回None；它使Session所管理对象已加载的状态过期，对象本身仍在，不删除行或提交事务。例：task.done原为False，赋值True只先改变内存；flush将更新发送到数据库事务，随后expire_all标记状态需要重读，下一次访问task.done按需查询并得到事务内的值。因此导入测试先调用含最终flush的导入函数，再expire_all并重查，避免只检查内存赋值。过期会丢弃尚未flush的相关属性修改，所以不能随意在flush之前执行；重新读到更新也不代表已提交，当前事务仍可回滚。
+
 ```text
 refresh() → 立即查询数据库
 expire()  → 标记过期，下次访问时再查询
@@ -2904,6 +3015,32 @@ response = TaskResponse.model_validate(task)
 ```
 
 `model_validate()`是`BaseModel`提供的类方法。它接收一个字典或对象，读取全部所需字段、执行Pydantic标准类型验证和已经注册的自定义验证器，成功后返回一个新的`TaskResponse`实例；验证失败则抛出`ValidationError`。传入ORM对象时，`from_attributes=True`使它能够读取`task.id`、`task.tags`等属性。
+
+在导入模型测试中的同一调用形式为：
+
+```python
+data = {"id": 3, "title": " 学习导入 "}
+validated_task = LegacyTaskInput.model_validate(data)
+assert validated_task.title == "学习导入"
+```
+
+`LegacyTaskInput`决定采用哪一套规则；`.model_validate`是类方法，括号里的data是传给它的第一个参数，即待验证数据。本次无需设置其他可选参数，严格程度沿用字段配置。输入data仍是字典，使用data["title"]访问；返回validated_task是模型实例，使用validated_task.title访问，不是HTTP Response，无需response.json()。不要将整个字典作为一个位置参数写成LegacyTaskInput(data)来代替该调用；模型直接构造通常接收字段关键字参数。调用本身不读取文件或写数据库。
+
+#### `Model(**data)`与`Model.model_validate(data)`的区别
+
+对于当前LegacyTaskInput模型，当data是键名为字符串的普通字段字典时，两种写法都可以创建模型并执行字段校验、默认值补充和自定义验证器：
+
+```python
+data = {"id": 1, "title": "任务"}
+task_a = LegacyTaskInput(**data)
+task_b = LegacyTaskInput.model_validate(data)
+```
+
+`**data`是Python的关键字参数展开，第一行构造相当于`LegacyTaskInput(id=1, title="任务")`；model_validate则把整个data作为一个参数交给Pydantic。不能笼统地说构造方式不会校验，或者不能使用`**data`。
+
+读取不可信JSON时，顶层是列表不代表每个元素都是字典。例如`[{"id": 1, "title": "任务"}, 123]`中，第二项数字不能进行关键字参数展开。`LegacyTaskInput(**123)`会先在Python调用阶段抛TypeError，尚未进入模型校验；`LegacyTaskInput.model_validate(123)`则由Pydantic检查输入并抛ValidationError。即使输入是字典，关键字参数展开也要求键为字符串。
+
+本次读取函数因此选择`LegacyTaskInput.model_validate(item)`，使“元素本身不是合法模型输入”和“字段内容不合法”都通过Pydantic的ValidationError处理。它返回校验后的LegacyTaskInput实例，不会把源字典原地变成模型，也不会写数据库。`results.append(LegacyTaskInput.model_validate(item))`表示先校验当前项，成功后才把模型实例加入结果列表；失败时异常传播，本次append不会执行。
 
 它与`field_validator()`职责不同：
 

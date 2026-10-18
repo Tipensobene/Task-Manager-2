@@ -1,6 +1,6 @@
 # 学习进度与阶段路线
 
-> 更新日期：2026-10-15。实现状态依据源码与Git核对；用户报告本次测试库pytest回归结果为`49 passed`，助手未重跑。项目使用说明见README.md，长期导师规则见AGENTS.md，详细知识笔记见get_knowledge.md。
+> 更新日期：2026-10-18。实现状态依据源码与Git核对；助手在专用测试库实际运行完整pytest套件108 passed；无数据库导入测试文件55 passed。项目使用说明见README.md，长期导师规则见AGENTS.md，详细知识笔记见get_knowledge.md。
 
 ## 1. 当前继续位置
 
@@ -13,7 +13,7 @@
 - 列表的priority、done、keyword和tag动态过滤已实现并通过隔离测试；数据库统计接口用一条聚合查询返回总数、已完成数和未完成数，混合数据与事务隔离空表场景均已验证。
 - database.py提供Engine、SessionFactory和get_session；orm_models.py提供任务、标签和中间表映射。
 - 正式七个任务接口均已改用Repository、Service和数据库Session，并有事务隔离测试；Alembic两版迁移、原库接管及测试库往返验证已完成，README已补齐迁移运行说明。旧JSON导入、Docker交付及阶段独立验收待完成。
-- 首个迁移及原库基线接管已验收；第二个迁移f959d63045e7通过测试库往返及原库升级验收。用户报告本次测试库回归为49 passed；两库均处第二版。README迁移说明已更新，下一步安排本轮Git变更审阅和提交教学，执行提交仍需明确授权。
+- Alembic两版迁移及原库接管已验收。旧JSON导入已完成入口、友好异常处理、事务回滚及说明，2026-10-18完整回归108 passed，真实JSON尚未导入。本地功能提交3e45e54已完成，教学文档随独立提交保存，均未推送。当前进入阶段四Docker小节整体导学，环境尚未核验或安装。
 
 ## 2. 学习者背景、目标与时间预算
 
@@ -217,6 +217,94 @@
 未决问题包括：同名标签并发创建竞争、数据库级priority CHECK约束、正式业务规则兼容、响应转换适用范围及持久测试覆盖。按实际整合需要逐项处理，不将全部理论变成进入LLM阶段的门槛。
 
 ### 下一次的具体起点
+
+2026-10-18 Git授权执行：用户明确确认已审阅两提交方案并授权执行。本地功能提交3e45e54（feat: add transactional legacy JSON import）包含导入实现、两份测试和README；教学规范、知识笔记及进度作为独立docs提交保存，提交后核对git log和工作区。未合并、打标签或推送，本轮未重复运行最近108 passed测试。接下来回到Docker导学，等待学习者解释两个容器中的localhost含义；尚未检查Docker环境。
+
+2026-10-18继续位置：用户澄清并理解真实JSON尚未导入，当前继续学习。开始Docker小节整体导学（仍属阶段四）：问题是可复现运行环境，目标为API/独立PostgreSQL容器、Compose协作、迁移及持久卷验证；先解释镜像/容器/Dockerfile/Compose及端口、网络、卷，不先安装或改配置。环境尚未核验，导学后确认理解再安排第一步。导入Git两提交方案已展示但未获明确提交授权，保留待办，不自动提交；不阻塞概念导学。
+
+2026-10-18导入收尾：SQLAlchemyError已正确导入并加入main捕获范围；导师补模拟数据库错误入口用例，沿用退出1、实际错误提示与无成功输出断言。无数据库文件55 passed，随后专用测试库完整套件108 passed，测试写入回滚。README已补导入路径、字段规则、整批事务、退出码和限制；业务代码本轮仅同步注释，未代写功能。下一步先讲本轮新增用例，再做Git变更摘要/复盘；不自动提交、推送或真实导入。原库已有任务，按当前规则拒绝合并导入；并发导入防重未实现且不宣称支持。
+
+2026-10-18友好错误验收：main在parse_args之后捕获导入调用的OSError/ValueError，消息包含实际error，以SystemExit(1)结束，不打印成功结果。导师更新入口失败测试为数据错误和文件缺失两组，检查退出1、标准错误及空标准输出；无数据库文件54 passed，未重跑数据库或全套（上次全套106 passed）。同步旁注，不改业务行为。下一步介绍SQLAlchemyError处理数据库失败，随后README/最终回归收尾；真实JSON仍未导入。
+
+2026-10-18路径传递旁注：按用户授权把tmp_path→file_path→sys.argv字符串→args.file_path→fake形参path→received_paths的完整具体例子合并进入口测试旁注；说明局部变量不共享、比较相同路径不用对象身份。本轮仅注释/进度更新，未运行测试。下一步讲解parser.exit(status=0,message=None)并安排学习者在main中捕获导入调用的OSError/ValueError，以1退出并输出简洁错误；解析器自身缺参/帮助仍维持2/0。数据库错误处理随后按需求补充，暂不真实导入。
+
+2026-10-18入口连接验收：main正确调用import_legacy_file并在成功后打印len(mapping)与映射。导师更新成功入口测试，用替代函数记录Path参数、返回预设映射，检查两行输出；新增失败不打印成功测试，更新代码旁注以消除旧“只打印路径”描述。无数据库文件53 passed，随后专用测试库完整pytest 106 passed，数据库写入由测试事务回滚；真实JSON未导入。本轮仅改测试和注释，未代写业务功能。下一步先讲清替代入口测试，之后安排友好错误提示及README收尾，暂不对已有任务原库运行导入。
+
+2026-10-18教学要求补充：用户已理解add_argument登记与parse_args执行的区别，要求把表格类比与具体输入流旁注代码，并将“整体通俗目标→样例贯穿跨文件执行→逐步值变化→正常/异常分支”作为逐行解释规范。已合并到AGENTS现有条款及main注释，本轮仅规则/注释/进度更新，未运行测试或改变功能。下一步仍由学习者把main的路径打印替换为import_legacy_file调用及成功数量/ID映射输出，导师随后更新入口测试；暂不运行真实导入。
+
+2026-10-18入口注释教学：按用户明确授权在main及三个入口测试加入详细中文注释和具体执行例子，解释sys/argv属性替换、add_argument登记与parse_args实际转换、Namespace、输出比较、文件不创建，以及缺参/帮助在库内部产生SystemExit的分支。只改注释并清除文件末尾多余空行，未改变业务逻辑，本轮未运行测试；先让学习者结合源码理解，不提前连接真实导入。
+
+2026-10-18入口验收：main正确登记file_path/type=Path并打印，主入口guard正确。已将argparse三个接口、参数名与输入值区别合并笔记。导师新增三项入口测试，模拟argv并捕获输出/退出状态；本轮无数据库文件52 passed，数据库测试未重跑（此前4项通过）。下一步讲清sys.argv/capsys/SystemExit后，由学习者将main的打印替换为调用import_legacy_file并输出数量和映射；不执行真实导入，后续调整入口测试。本轮未代写业务代码。
+
+2026-10-18事务测试知识整理：用户已理解monkeypatch从setattr到fixture清理期间持续生效，作用于类方法且不限一次调用。已合并文件事务入口、失败模拟逐段解释、原方法引用与闭包、Python列表不随回滚清空、get可能命中身份映射，以及undo撤销全部替换的边界。本轮仅文档维护，未重跑测试；最近专项结果仍53 passed。下一任务仍为导入使用入口及完整回归，不自动执行真实文件导入。
+
+2026-10-18事务入口验收：import_legacy_file先load、函数内导入SessionFactory、begin块内整批导入、块外return均正确。导师新增两测试及局部fixture，monkeypatch将工厂绑定测试连接并create_savepoint，外层夹具回滚保护数据。成功后重新查到两条记录并拒绝重复调用；第二条模拟RuntimeError，第一条已flush的任务及新标签均回滚。两导入文件53 passed，专用测试库，无持久业务写入。本轮未代写业务功能，下一步先讲解monkeypatch与异常放在with外的意义，再安排入口/完整回归，不直接真实导入。
+
+2026-10-18知识整理：expire_all例子合并到原Session章节，集合/字典ID映射、scalars整模型查询和enumerate合并到导入章节。本轮核对源码并修改文档，未运行测试。下一步由学习者新增import_legacy_file(file_path: Path)->dict[int,int]调用者函数：先load完整校验，再用SessionFactory.begin开启会话及事务，调用import_legacy_tasks，退出成功后返回映射；数据库工厂可在函数内延迟导入，避免纯模型导入就要求密码。需讲明异常向with外传播才能自动回滚。尚不执行真实导入，导师后续补事务测试。
+
+2026-10-17导入循环验收：非空目标检查已恢复。导师新增成功导入测试，夹具事务内delete任务构造空目标，结束回滚恢复；测试覆盖两条任务完成状态/优先级/时间、ID映射和共享标签复用。执行两导入测试文件51 passed（非完整套件），专用测试库，无提交。expire_all后重读以验证实际flush的数据。本轮未修改业务代码。下一步先讲解成功测试的新方法及事务内清空边界，再实现调用者事务组织，补失败整批回滚和重复执行拒绝测试。
+
+2026-10-17导入循环静态验收：Service创建、done复制、id_mapping累积、循环外flush与return位置正确，但此前非空目标统计检查被删除，尚不满足导入边界。下一步由学习者在循环之前恢复repository.get_stats及total非零raise，保留新循环；之后导师复验已有拒绝测试并补成功导入测试。本轮未连接数据库或执行导入，也未代写业务代码；不以局部正确认定整函数通过。
+
+2026-10-17目标非空检查复核：学习者已补raise，助手在专用测试库运行两个导入测试文件，共50 passed（49模型/读取用例+1非空拒绝数据库用例），数据库测试由外层事务回滚。下一步学习者实现导入循环：复用TaskService.create_task，设置返回ORM对象的done，记录旧新ID字典，结束flush后返回，不commit。需说明create_task内部add_task已flush生成ID，但不等于提交；最终flush确保最后一条done更新发往数据库。空目标成功及回滚测试由导师后续编写。本轮未代写业务代码。
+
+2026-10-17目标非空检查验收：import_legacy_tasks正确使用Repository统计，但if中仅构造ValueError，遗漏raise。导师新增tests/test_legacy_import_database.py，在测试库通过database_session准备已有任务并调用导入，实际1 failed（DID NOT RAISE ValueError），外层事务回滚测试写入。下一步由学习者补raise后复验；空输入占位返回不单独写镜像实现测试。尚未实现数据库导入循环或提交，业务代码未代写。
+
+2026-10-17重复源ID验收：学习者正确先校验再查seen_ids，首次出现加入集合与结果列表，重复抛含ID的ValueError。导师补相邻[3,3]和非相邻[3,8,3]用例，独立导入测试49 passed，无数据库连接；测试用不同标题避免将标题相同误判为拒绝原因。下一步讲解本组测试后进入导入数据库函数的事务边界设计（Session由调用者提供、函数不commit、拒绝任务非空目标、保留done和标签并返回ID映射）。本轮未代写业务代码。
+
+2026-10-17非法元素测试：导师新增3个用例，文件第一条合法，第二条分别为123、None或done为字符串的字典，预期ValidationError，独立测试47 passed。覆盖错误元素不被跳过且不会返回前半段结果；只涉及内存结果，不等于数据库事务回滚已验证。下一轮讲解后安排学习者实现重复旧ID检测；本轮未修改业务代码、未连接数据库。
+
+2026-10-17教学分工更新：用户明确要求保留当前测试轮次，改由导师编写每轮测试后讲解，业务功能仍由学习者实现，规则已加入AGENTS。本轮已代写非列表根结构四用例，使用合法JSON的dict/str/int/None，断言ValueError及Not a list消息；独立测试44 passed，无数据库连接。下一轮仍须讲清本组代码，不直接跳到新业务；之后由导师补非法元素测试并讲解，再安排学习者实现重复源ID检查。未提交Git。
+
+2026-10-17当前验收：非法JSON测试已先关闭写文件再读取，助手复验独立测试40 passed，无数据库连接。本轮未代写代码。下一步参数化写入合法JSON但非列表顶层（dict、str、int、None），预期ValueError且match="Not a list"，区分根结构错误与JSON解析异常；之后补非法元素和重复ID。
+
+2026-10-17非法JSON测试检查：实际40 passed，但pytest.raises与读取调用嵌套在写文件with内，读取可能看见尚未刷新的空文件，仍抛相同异常而假通过，不能确认测试覆盖预期的"["内容。下一步学习者将raises移到写文件with外（与with open对齐），关闭写文件后再读取；无需额外flush。本轮未代写代码，暂不推进结构错误测试。
+
+2026-10-17缺失文件测试验收：仅构造不存在路径，使用raises(FileNotFoundError)包住读取调用，正确；助手运行独立测试39 passed，无数据库连接。本轮未代写代码。下一步讲解file.write直接写入非法JSON文本，用JSONDecodeError验证解析失败；随后补顶层/元素结构错误及重复旧ID。
+
+2026-10-17当前验收：正常两记录读取测试的fixture已改为tmp_path，助手复验38 passed；覆盖记录数量、顺序、规范化和默认值，无数据库连接。本轮未修改业务代码或测试。下一步补不存在文件的FileNotFoundError及错误JSON的JSONDecodeError传播测试，再补顶层/元素结构错误与重复旧ID。
+
+2026-10-17正常记录读取测试核对：文件准备和两条记录断言正确，但误将内置fixture参数tmp_path写成temp_path，pytest无法找到fixture。实际运行37 passed, 1 error（测试准备阶段错误，函数体未运行）。下一步由学习者将函数参数及路径拼接中的temp_path都改为tmp_path，再复验；本轮未修改代码或访问数据库。
+
+2026-10-17当前验收：空列表读取测试正确使用tmp_path、UTF-8写入、关闭文件后调用load_legacy_tasks，助手运行独立测试37 passed，未连接数据库。本轮知识已合并tmp_path作用域与磁盘保留差异、Path/文件对象、读取调用链；未代写代码。下一步由学习者写两条任务JSON的读取测试，断言数量、顺序、规范化及默认值，之后补文件和结构错误。
+
+2026-10-17读取函数修正通过静态核对：逐项调用LegacyTaskInput.model_validate(item)，其余流程符合当前要求。本轮未运行新增读取测试或重跑模型测试。下一步先讲tmp_path内置fixture、Path拼接及文件生命周期，再由学习者用open/json.dump写临时[]，调用load_legacy_tasks断言返回[]；随后补正常记录、格式/类型异常和重复旧ID检查。
+
+2026-10-17读取函数复核：循环现为LegacyTaskInput(item)，仍未调用model_validate。该写法将字典作为位置参数传给BaseModel构造器，正常记录也会TypeError；应改为LegacyTaskInput.model_validate(item)。本轮仅静态检查，暂不推进tmp_path实现或重跑不覆盖读取函数的36项模型测试；修正后再验收读取路径。未代写代码。
+
+2026-10-17读取函数静态核对：只读UTF-8、顶层列表检查、返回列表及异常传播符合要求；循环使用LegacyTaskInput(**item)，对正常字典可用，但非映射元素会先在Python参数展开阶段抛TypeError，绕过Pydantic输入检查。本小步要求改为LegacyTaskInput.model_validate(item)，统一由模型校验每项并使错误元素产生ValidationError。尚未完成读取函数运行测试；本轮未改代码或重跑无关模型测试。修正后再学习tmp_path临时文件测试。
+
+2026-10-17当前验收：必填缺失测试已正确命名，显式空tags合法用例已补齐；独立模型测试36 passed，未加载conftest或访问数据库。本轮未代写代码。下一步由学习者在legacy_import.py类外实现load_legacy_tasks(file_path: Path)->list[LegacyTaskInput]：UTF-8只读json.load、顶层列表检查、逐项model_validate、完整返回。文件及校验异常暂原样传播；重复旧ID检查、错误定位和临时文件测试后续补充，不导入真实数据。
+
+2026-10-17本轮验收：新增两个必填字段缺失用例正确，但误用函数名test_legacy_task_accepts_empty_tags；显式空tags合法测试仍未实现。独立模型测试35 passed，未连接数据库。下一步由学习者将该函数更名为test_legacy_task_rejects_missing_required_fields，再单独新增空列表合法测试；预计36项。本轮未代写代码，不能因现有测试通过就认定缺失场景已覆盖。
+
+2026-10-17标签验收：六个非法tags参数均正确，助手运行独立模型测试33 passed，未连接数据库。文件中尚无test_legacy_task_accepts_empty_tags，因此此前计划34项未全部完成。下一步由学习者补显式空列表合法用例，再补缺失id/title的参数化用例；本轮未代写测试。
+
+2026-10-17优先级验收：六种非法值及三种合法值的参数化测试实现正确；助手运行独立模型测试27 passed，未加载conftest或连接数据库。下一步补标签容器/元素/空白边界、显式空列表及必填缺失；本轮未代写测试。
+
+2026-10-17标题边界验收：五种非法标题及恰好100字符合法标题用例实现正确。助手运行python -m pytest --noconftest tests/test_legacy_import.py -q，18 passed；未加载数据库夹具或连接数据库，本轮未修改测试代码。下一步补priority/tag及必填缺失，之后才进入读取JSON。
+
+2026-10-17知识整理：已检索并合并自上次整理后的导入模型职责、after执行顺序、StrictStr与容器严格模式、默认值测试预期错误、12项参数化案例和--noconftest使用边界；model_validate调用与返回对象说明补入原有方法章节。仅维护文档，未重跑测试。当前继续位置仍为补标题、优先级、标签及必填缺失测试，不推进数据库写入。
+
+2026-10-17非法id验收通过：六种参数均正确注入id、title合法、raises包住model_validate。助手运行独立模型测试12 passed，未加载conftest或连接数据库。本轮未修改测试实现；下一步仍是补其余模型边界，随后进入JSON读取与整批校验。
+
+2026-10-17当前验收：非法done参数化输入及raises范围正确，助手执行python -m pytest --noconftest tests/test_legacy_import.py -q，6 passed；未加载数据库夹具或连接数据库。下一步由学习者复用相同模式补非法id（0、-1、"3"、3.0、True、None），保持title合法，其他字段用默认值。缺失必填字段及其余字段边界后续补充；本轮未代写代码。
+
+2026-10-16当前验收：默认值测试已修正为done is False。助手运行python -m pytest --noconftest tests/test_legacy_import.py -q，2 passed；只运行模型测试，未加载数据库夹具或连接数据库。下一步导入pytest和ValidationError，用parametrize覆盖"false"、0、1、None，with pytest.raises(ValidationError)验证严格done拒绝非法输入；本轮未代写代码。
+
+2026-10-16最新验收：默认值测试已添加，但误断言done is True；模型默认False符合需求，需学习者把断言改为is False。助手运行隔离模型测试文件，结果1 failed, 1 passed；本轮未修改测试代码。先修正测试预期并复验，再编写非法done参数化测试。未加载conftest或访问数据库。
+
+2026-10-16当前验收：第一项正常数据测试正确使用model_validate返回实例，五字段断言覆盖清理标题、保留True、优先级小写及标签顺序去重。助手运行python -m pytest --noconftest tests/test_legacy_import.py -q，结果1 passed；未加载数据库夹具或连接数据库。这不是完整套件回归。下一步由学习者添加仅id/title输入的默认值测试，随后补非法done参数化；本轮未修改业务代码或测试实现。
+
+2026-10-15 tags静态验收通过：Field(default_factory=list, strict=True)、list[StrictStr]及after小写/空白拒绝/顺序去重符合要求；strip由模型配置作用于字符串元素，因此无需要求重复添加strip。验证器以list[str]标注也可，当前list[StrictStr]不影响正确性。本轮未运行测试或代写代码。下一步由学习者新建tests/test_legacy_import.py，先写完整合法数据规范化、缺失字段默认值、非法done参数化三组测试，后续再补其他字段边界和读取流程。
+
+2026-10-15 priority静态验收通过：strict=True、默认normal、after验证器strip/lower、非法值ValueError、成功返回字符串均正确；额外strip与全局配置重复但不影响正确性。本轮未运行测试或代写代码。下一步解释容器strict不自动递归到元素，使用list[StrictStr]与Field(default_factory=list, strict=True)，由学习者编写after标签清理/空白拒绝/顺序去重验证器；尚未实现读取JSON或数据库写入。
+
+2026-10-15当前核对：id已移除min_length，仅保留strict=True和gt=0，静态验收通过。已将长度/数值约束、严格整数拒绝bool及源ID用途合并进知识章节；本轮未运行测试或修改业务代码。下一步priority使用严格str和normal默认值，after字段验证器清理并转小写后校验low/normal/high；先解释执行顺序再由学习者实现。
+
+2026-10-15导入模型静态验收：title为必填严格字符串、strip后长度1～100；done为严格bool且默认False，均符合要求。本轮未运行测试或代写代码。下一步讲解Field(gt=0)并由学习者添加必填id，严格整数、正数、无默认值；旧id用于源记录识别和后续映射，不传入数据库identity。随后补其余字段并安排模型测试。
+
+2026-10-15导入导学：已读取旧模型/storage与Service/Repository。初步范围为单次导入、任务空目标库、数据库新ID、保留done与标签、整批失败回滚、不改源文件。学习者已理解转换与严格校验的区别，缺失done由校验模型补False，字符串/数字/null拒绝。已将内容整理进笔记。下一步讲解Field(strict=True)，由学习者新建legacy_import.py，仅编写LegacyTaskInput的title和done两字段；其他字段、读文件及数据库写入逐步补充。本轮仅文档更新，未运行测试或写业务代码。
 
 2026-10-15 Git收尾：用户明确授权按两个提交方案执行。本地功能提交138df49（feat: add Alembic migrations and task timestamps）已完成，包含迁移、模型、依赖、数据库选择及README；同时清除初始迁移文档字符串的一处尾随空格。教学规则、笔记及本进度随独立文档提交保存，完成后以git log和工作区状态核验。未合并、打标签或推送。下一学习项为旧JSON数据导入，先检查现有数据格式、导入范围和重复执行规则，再小步设计；本次不重复运行已由用户确认49 passed的测试。
 

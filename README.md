@@ -58,6 +58,7 @@ Task_Managers_2/
 ├── task_repository.py # SQLAlchemy 数据访问层
 ├── database.py       # Engine、Session 工厂与 FastAPI 数据库依赖
 ├── orm_models.py     # tasks、tags 与关联表的 ORM 映射
+├── legacy_import.py  # 旧JSON校验与一次性事务导入入口
 ├── alembic.ini       # Alembic 配置
 ├── alembic/          # 迁移环境及版本脚本
 ├── client_demo.py    # 使用 requests 调用 API 的客户端示例
@@ -155,6 +156,38 @@ python -m alembic check
 后续修改模型后，可运行`python -m alembic revision --autogenerate -m "变更说明"`生成迁移，人工审查后先在专用测试库验证，再应用到实际使用库。生成文件不等于已经升级，历史已应用迁移不回写。`upgrade head --sql`只生成SQL文本。
 
 回退命令会执行对应downgrade，可能删除列、表及其数据；日常运行不需要回退。本项目的回退验证在task_manager_migration_test中进行，原库仅升级。created_at使用带时区时间戳和CURRENT_TIMESTAMP默认值；旧记录补迁移事务时间，不能据此恢复真实历史创建时间。当前API响应尚未增加该字段。
+
+## 旧JSON一次性导入
+
+导入前需要安装依赖、预先创建并迁移目标数据库，在同一终端设置密码与TASK_MANAGER_DB_NAME。第一版只接受任务表为空的目标库；标签可以已有。原库已有练习任务时会拒绝导入，不会清空、覆盖或合并任务。
+
+先查看帮助（不需要连接数据库）：
+
+```powershell
+python legacy_import.py --help
+```
+
+以下命令会真实写入所选数据库，执行前确认目标和源文件；先在独立空任务测试库验证，不对已有任务的原库直接运行：
+
+```powershell
+$env:TASK_MANAGER_DB_PASSWORD = "你的数据库密码"
+$env:TASK_MANAGER_DB_NAME = "预先创建并完成迁移的目标数据库名"
+python legacy_import.py "data/tasks.json"
+```
+
+路径可为绝对路径；相对路径以终端当前目录为基准，含空格时使用引号。输入顶层必须是任务列表，例如：
+
+```json
+[
+    {"id": 3, "title": "旧任务", "done": true, "priority": "high", "tags": ["Python"]}
+]
+```
+
+id为必填严格正整数且文件内不能重复；title为必填严格字符串，清理首尾空白后长度1～100。缺失done、priority、tags时分别补false、normal、[]；显式null不接受。done只接受布尔值，字符串"false"和数字0均拒绝。priority清理并转小写后须为low/normal/high；tags须为字符串列表，清理、转小写、拒绝空白并保留首次出现顺序去重。额外字段当前按Pydantic默认行为忽略。
+
+全部记录先校验，再开启同一个事务写入。复用规范化标签，保留完成状态及优先级，由数据库生成新ID及导入时间created_at；旧文件没有真实创建时间。成功提交后先打印任务数量，再打印Python字典形式的旧ID→新ID对照。失败则回滚本批写入，源文件不修改；文件、数据及SQLAlchemy异常显示失败原因并以1退出，参数用法错误退出2，帮助和成功退出0。缺失密码环境变量属于配置错误，当前会直接报KeyError，应先配置。
+
+首次成功导入非空数据后，再次运行因目标已有任务而拒绝；空文件列表只返回空映射，不产生导入标记。此版本定位本地单次导入，不支持并发导入防重、断点续传或持续同步，也不恢复旧ID。旧CLI此后产生的新数据不会自动同步至数据库。
 
 ## 自动化测试
 
@@ -370,6 +403,6 @@ ID 表示任务身份，不是任务在 Python 列表中的位置。
 
 ## 后续规划与学习记录
 
-PostgreSQL、SQLAlchemy ORM、Alembic结构迁移和事务隔离自动化测试已经接入。阶段四后续将推进旧 JSON 数据导入、Docker 运行配置和独立重建验收。
+PostgreSQL、SQLAlchemy ORM、Alembic结构迁移、旧JSON一次性导入及事务隔离自动化测试已经接入。阶段四后续将推进Docker运行配置和独立重建验收；真实历史文件导入需另行确认执行目标。
 
 已完成阶段、知识点大纲、验收记录及当前学习进度统一记录在 [PROGRESS.md](PROGRESS.md)。导师教学方式与操作约束见 [AGENTS.md](AGENTS.md)。本文件继续作为项目功能、接口与运行方式的说明。

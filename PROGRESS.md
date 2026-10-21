@@ -1,6 +1,6 @@
 # 学习进度与阶段路线
 
-> 更新日期：2026-10-18。实现状态依据源码与Git核对；助手在专用测试库实际运行完整pytest套件108 passed；无数据库导入测试文件55 passed。项目使用说明见README.md，长期导师规则见AGENTS.md，详细知识笔记见get_knowledge.md。
+> 更新日期：2026-10-21。实现状态依据源码与Git核对；助手在专用测试库实际运行完整pytest套件108 passed；无数据库导入测试文件55 passed。项目使用说明见README.md，长期导师规则见AGENTS.md，详细知识笔记见get_knowledge.md。
 
 ## 1. 当前继续位置
 
@@ -12,8 +12,8 @@
 - database_api_demo.py已实现列表、详情、创建、部分更新、删除、完成任务；创建和更新支持标签清理、复用及关联。
 - 列表的priority、done、keyword和tag动态过滤已实现并通过隔离测试；数据库统计接口用一条聚合查询返回总数、已完成数和未完成数，混合数据与事务隔离空表场景均已验证。
 - database.py提供Engine、SessionFactory和get_session；orm_models.py提供任务、标签和中间表映射。
-- 正式七个任务接口均已改用Repository、Service和数据库Session，并有事务隔离测试；Alembic两版迁移、原库接管及测试库往返验证已完成，README已补齐迁移运行说明。旧JSON导入、Docker交付及阶段独立验收待完成。
-- Alembic两版迁移及原库接管已验收。旧JSON导入已完成入口、友好异常处理、事务回滚及说明，2026-10-18完整回归108 passed，真实JSON尚未导入。本地功能提交3e45e54已完成，教学文档随独立提交保存，均未推送。当前进入阶段四Docker小节整体导学，环境尚未核验或安装。
+- 正式七个任务接口均已迁移数据库并有事务隔离测试；Alembic两版迁移、原库接管及JSON导入功能已实现并验收（真实历史JSON未执行导入）。当前进行Docker导学及环境准备，容器交付和阶段独立验收待完成。
+- Alembic两版迁移及原库接管已验收。旧JSON导入已完成入口、友好异常处理、事务回滚及说明，2026-10-18完整回归108 passed，真实JSON尚未导入。本地功能提交3e45e54已完成，教学文档随独立提交保存，均未推送。当前进入阶段四Docker小节；2026-10-18已安装Docker Desktop并完成D盘独立运行目录绕过方案，服务端29.8.2和容器列表查询已验证。用户提供hello-world完整运行截图，最小容器实验已成功；2026-10-19已合并新增知识。用户截图已确认镜像保留、无运行中容器、停止容器Exited (0)；用户反馈start -a重新启动原实例符合预期。用户反馈具名run创建hello-second符合预期，已观察同一镜像对应不同容器实例。用户反馈Nginx web-demo持续运行及127.0.0.1:8080欢迎页符合预期。用户反馈日志、停止后不可访问及启动恢复均符合预期，已理解端口转发与Nginx职责；用户反馈本地HTML只读挂载和修改后刷新均符合预期；教学Dockerfile两条FROM/COPY已核对正确，绑定挂载新增知识已合并；已只读确认task-web:v1教学镜像构建完成，用户反馈web-built的镜像副本与挂载实时更新对比符合预期；用户反馈v2镜像及新实例页面对比符合预期；数据库host已可配置，两个隔离子进程验证默认及db覆盖通过；根目录.dockerignore文本验收通过；正式Dockerfile环境与依赖四条指令文本验收通过；正式Dockerfile六条指令文本验收通过；task-manager-api:v1经TLS下载故障排查后实际构建成功；API服务及数据库连接仍待运行验证。
 
 ## 2. 学习者背景、目标与时间预算
 
@@ -217,6 +217,78 @@
 未决问题包括：同名标签并发创建竞争、数据库级priority CHECK约束、正式业务规则兼容、响应转换适用范围及持久测试覆盖。按实际整合需要逐项处理，不将全部理论变成进入LLM阶段的门槛。
 
 ### 下一次的具体起点
+
+2026-10-21 Git收束：用户明确批准两次本地提交。运行交付配置、数据库host与README已提交为77768fb（feat: add containerized API and PostgreSQL setup）；重新暂存了新增文件完整内容，避免空文件提交。Docker教学示例、get_knowledge.md及本进度记录按批准方案随下一条docs提交保存，本条不预填自身提交哈希；最终状态以提交后的Git核对为准。未推送、合并或打标签。本轮仅Git及进度维护，未重跑历史测试或操作服务。下一步继续阶段四小功能独立验收，不把有提示恢复练习等同完整阶段掌握。
+
+2026-10-21恢复练习最终Review收束：依据用户完整截图及此前实际查询，恢复结果通过、任务1保留；用户多执行build api和upgrade head，API镜像更新并替换容器，迁移无新增操作。PATH与参数拼写曾使用提示，记为有提示复现、流程选择需间隔练习，不机械重做停启。已合并config --quiet解析/插值/非连接验证边界、重复首次清单及orphan提示知识。当前9个变更文件待Git收束，5个新增文件暂存区仍是空内容而工作区有完整内容，提交前必须重新暂存真实文件。下一步展示两次提交方案（运行交付+示例/学习记录），等待明确提交授权；未执行commit/push，不标记阶段四最终独立验收完成，后续仍需小功能独立设计实现。
+
+2026-10-21 build/up场景辨析已合并：用户要求整理，已在学习文档原Docker章节补build制作镜像与up组织运行区别、缺镜像自动构建边界、显式--build及首次部署/普通恢复/源码更新/迁移更新场景对照；同时合并实际练习中PATH缺失和---quiet拼写错误的诊断。用户尚未反馈整套恢复及/tasks/1最终结果，独立练习保持未验收，PATH已用提示。下一步继续完成现有恢复练习，不重建或重跑迁移；本轮仅文档编辑，无服务操作、测试或Git提交。
+
+2026-10-21恢复口述Review与学习文档合并：用户能说明输入密码、等待数据库健康、复用已有构建及查询任务；遗漏API启动（命令末尾只写db）、密码行多写image、路由单数/task。导师已修正并区分无需重建与无需迁移的独立判断依据，增量合并学习文档。下一步用户独立完成停止项目服务→打开新终端→准备PATH/同一密码→恢复整套服务→ps与/tasks/1验收，可查README；只允许stop与恢复，不删除容器、卷或重建资源。由用户反馈实际结果后再记录独立程度；本轮仅文档编辑，无运行测试、服务操作或Git提交。
+
+2026-10-21 Docker运行README收束：已按实际Dockerfile/compose/database/env核对并补README容器运行章节、目录结构、host配置及当前规划。说明独立密码输入、config --quiet、先db/build/迁移后api、up等待边界、读请求验收、ps/logs/stop/恢复、卷保留及明确未验证范围。仅文档编辑，未重新执行命令、测试或删除资源，未提交Git。下一步小范围独立复现：用户依据README先口述“新终端恢复已有数据环境”的步骤及是否重建/迁移，不先停止或删除当前服务；据回答补缺口后再安排独立操作与Git整理。尚未完成阶段独立验收。
+
+2026-10-21数据库容器替换持久化验收通过：用户明确授权删除旧容器并复用数据卷。导师记录原ID d57023a294ca及卷task_managers_2_postgres_data，核对API/db运行配置对应（未打印密码），先停API并pg_dump -Fc备份到D:\DockerData\backups\task-manager-before-recreate-20261021-115630.dump（6633字节，PGDMP头；未恢复演练）。compose up -d --no-deps --force-recreate --wait --wait-timeout 120 db后新ID 66e013a3e621、同一卷、healthy；恢复API后/tasks/1返回200和原字段标签，SQL确认库task_manager_container、版本f959d63045e7、任务1条。无卷删除、无原库操作、无重新迁移、无Git提交。已合并up等待参数、停启/重建证据边界及此次操作知识。下一步收束Docker运行说明与配置使用文档，再安排阶段独立复现；尚未更新README容器运行章节或做完整容器测试。
+
+2026-10-21容器化写入读回验收：用户反馈完成，导师GET列表和/tasks/1只读确认ID=1、标题Docker持久化验收任务、priority high、done false、标签docker/persistence，详情HTTP200。下一步用户compose stop后up -d --wait --wait-timeout 120恢复服务并查询/tasks/1，只验证同一容器停启保留记录，不冒称替换容器后持久化通过。真正重建需另行取得删除旧容器的明确确认，保留命名卷；当前未停止服务或删除资源、未提交Git。
+
+2026-10-21容器化API只读验收通过：用户反馈up/ps及页面符合预期，导师实际确认task_managers_2-api-1 Up、db healthy，127.0.0.1:8000/openapi.json返回200、标题Task Manager 4.0，GET /tasks返回200及0条。已合并compose up默认CMD、ps与container ls范围、状态字段及文档/数据库查询验证层次。下一步用户经Swagger POST /tasks创建一条有独特标题和标签的容器验收任务，记录返回ID，再GET /tasks/{id}核对读回。尚未创建写入、验证重建持久化或导入旧JSON。本轮仅只读请求和文档更新，无项目测试或Git提交。
+
+2026-10-21容器数据库迁移验收通过：实际inspect迁移容器exited/0、命令为python -m alembic upgrade head；日志显示两版upgrade完成。db内只读查询确认task_manager_container、alembic_version=f959d63045e7，public四表齐全且tasks含created_at。已将Compose run服务名后命令覆盖CMD、任务容器与镜像区别、构建及迁移链合并学习文档。当前8000未发现监听。下一步用户在设置密码的同一终端执行compose up -d api及compose ps，再访问127.0.0.1:8000/docs和/tasks；先只读验证，暂不导入旧JSON。本轮未启动API、未写业务数据或提交Git。
+
+2026-10-21独立数据库启动验收通过：用户截图显示postgres:18已拉取、项目网络/命名卷创建、db healthy。导师实际只读确认task_managers_2-db-1运行且healthy，SQL返回task_manager_container与用户postgres，public当前无表；挂载实际卷task_managers_2_postgres_data到/var/lib/postgresql。此前未发现容器的待核验状态已由本次新证据更新。未读取密码、未改原库。下一步用户在保存密码的同一终端先compose build api，再compose run --no-deps --name task-manager-migrate-v1 api python -m alembic upgrade head；讲清一次性容器、命令覆盖和不启动HTTP服务，暂不执行downgrade或删除资源。迁移尚未执行，无Git提交。
+
+2026-10-21独立数据库启动待核验：用户反馈上一轮操作完成，已追加交互密码、临时环境变量、up -d --wait --wait-timeout 120 db及ps知识。导师实际检查当前compose ps为空、docker compose ls -a无项目、全体容器无postgres，compose exec -T db只读目标查询返回service db is not running；没有查询到库名或表，也未找到卷挂载。状态记录为未验收，不执行迁移或自行填入密码。下一步请用户提供上一轮启动命令及compose ps的输出（不含密码），确认是否只完成配置、环境未继承或启动失败；本轮未启动/删除资源、未连接原库或提交Git。
+
+2026-10-21启动依赖验收与知识合并：api.depends_on.db.condition=service_healthy文本正确，独立子进程虚构密码执行compose config --quiet退出0。已合并健康检查产生状态、启动依赖消费状态及非迁移/持续恢复的边界。未启动容器或修改实际密码。下一步用户在项目根目录交互输入独立容器密码到当前终端环境，不写.env或Compose；执行docker compose up -d --wait --wait-timeout 120 db，仅启动db并创建/复用项目网络与命名卷，compose ps查看healthy。尚无真实初始化或数据库查询验证，不接触本机原库。无Git提交。
+
+2026-10-21健康检查配置验收：核对db.healthcheck的pg_isready显式TCP主机、用户/库名和5s/3s/10次/10s参数正确。独立子进程使用虚构密码执行compose config --quiet退出0，未创建容器、卷或数据库。已将检查执行位置、退出码、宽限期、unhealthy不自动重启及非密码/业务表验证的边界合并学习文档。下一步学习者在api中添加depends_on/db/condition: service_healthy，理解启动等待而非持续可用性保证；暂不up，后续安全提供运行密码，再先启动独立db并迁移。本轮无业务代写、真实数据库操作或Git提交。
+
+2026-10-21环境变量与启动链知识合并：核对api已增加TASK_MANAGER_DB_HOST=db、库名task_manager_container及同一外部密码插值，db/api环境变量归属正确。已将Compose插值→数据库官方初始化→CMD/Uvicorn导入→URL/Engine/Session→实际SQL取得连接的逐段语句关联并入学习文档；未写入或打印密码。下一步先添加db健康检查pg_isready，参数明确-h 127.0.0.1 -U postgres -d task_manager_container，避免把仅容器进程已启动视为可连接；后续再配置api的depends_on/service_healthy。暂不启动、建库或迁移。本轮无测试或提交。
+
+2026-10-20命名卷验收与知识合并：核对db内postgres_data:/var/lib/postgresql及顶层volumes/postgres_data正确；已合并卷/容器内路径区别、PostgreSQL18默认子目录、复用同一实际卷而非仅相同路径、项目名前缀与跨版本升级边界。本轮未启动或创建资源、未修改凭据或提交Git。下一步学习者为api添加environment：TASK_MANAGER_DB_HOST=db、TASK_MANAGER_DB_NAME=task_manager_container、TASK_MANAGER_DB_PASSWORD使用与db相同的外部TASK_MANAGER_CONTAINER_DB_PASSWORD必填插值。讲清同一外部值进入两个不同名称变量；尚待数据库就绪检查与运行时密码，暂不up。
+
+2026-10-20数据库配置文本验收与知识合并：核对compose.yaml平级db/api正确，db使用postgres:18，POSTGRES_USER/DB和独立密码必填插值齐全；API仍缺数据库环境配置。已将自制API镜像与官方数据库镜像、初始化变量、插值与业务表迁移边界合并学习文档。本轮未启动服务或修改凭据。下一步先讲命名卷：db服务挂载postgres_data:/var/lib/postgresql，顶层登记volumes/postgres_data；PostgreSQL 18目标路径按官方版本规则，不沿用17及更早的默认路径。待补就绪检查及API环境后才启动；无测试或Git提交。
+
+2026-10-20 Compose/YAML知识合并及api骨架验收：已合并上次文档更新后的Hub匿名token超时、pip TLS及连带版本错误、镜像实际构建/pip check证据、Compose/YAML职责与层级及api/build/ports。当前compose.yaml仅api部分正确，导师实际执行compose config --quiet退出0；未启动服务。下一步由学习者添加db: image postgres:18和初始化environment，区分POSTGRES_*与API自定义TASK_MANAGER_*，通过TASK_MANAGER_CONTAINER_DB_PASSWORD的必填插值读取独立容器密码；先解释环境变量与插值，不修改.env、不打印密码、不连接原库。数据卷和就绪检查尚待配置，暂不up。本轮无业务代写或Git提交。
+
+2026-10-20 Compose开始：只读确认Docker Compose v5.6.0可用，根目录尚无Compose配置；正式镜像已构建，API和数据库尚未启动。下一步由学习者创建compose.yaml，先登记services/api、build: .与本机8000端口映射；讲清YAML层级、Compose负责组织运行而Dockerfile负责构建。暂不执行up，待补独立db服务、环境变量、数据卷和就绪检查后再启动，不连接原库。本轮未改业务代码、未启动服务或提交Git。
+
+2026-10-20首次正式镜像构建排障：用户先遇Docker Hub匿名token连接超时，单独pull python:3.14-slim成功后，构建在pip访问pypi.org时报TLS UNEXPECTED_EOF_WHILE_READING；后续versions:none属于索引获取失败的连带消息，不能直接认定版本不存在。导师实际重试复现；独立基础容器urllib及pip查询正常，最小构建环境pip也查到0.142.2，第二次实际项目构建成功，依赖安装及COPY完成并生成task-manager-api:v1。未修改源码、Dockerfile、依赖、下载源或证书校验；现象符合间歇性连接失败，具体网络根因未确定。诊断容器task-pypi-probe-20261020、task-pip-probe-20261020为停止实例，最小诊断构建产生无标签镜像，保留未删除。正式API尚未启动或连接数据库；下一步先说明构建成功与服务可用区别，再配置独立数据库及运行环境。无Git提交或原库操作。
+
+2026-10-20正式Dockerfile文本验收：根目录六条FROM/WORKDIR/COPY依赖/RUN安装/COPY源码/CMD指令正确，CMD以exec形式启动python -m uvicorn api:app，监听0.0.0.0:8000。已合并COPY双点号、RUN/CMD时机、JSON参数数组、模块导入名及监听地址与数据库host区别。尚未构建或运行、未验证Linux依赖安装。本轮只核对与改文档，无代写业务功能或Git提交。下一步用户在项目根目录执行docker build -t task-manager-api:v1 .；不提供密码、不运行API，构建结果反馈后再安排独立数据库和运行环境配置。
+
+2026-10-20正式Dockerfile前四条验收：核对FROM python:3.14-slim、WORKDIR /app、COPY requirements.txt .、RUN python -m pip install --no-cache-dir -r requirements.txt均正确；尚未构建，未验证Linux依赖安装。已将.dockerignore及RUN/python/-m/pip/install/-r/缓存/路径和执行时机的讲解合并学习文档。本轮无业务代写、测试或提交。下一步由学习者追加COPY . .及exec形式CMD，以python -m uvicorn api:app --host 0.0.0.0 --port 8000启动；先讲源码复制、构建与运行边界、监听地址和数据库host区别，暂不启动真实API或连接原库。
+
+2026-10-20构建排除规则验收：已读取根目录.dockerignore，确认Git、虚拟环境、IDE、Python/pytest缓存、.env及.env.*、本地data/logs排除规则与要求一致；这里只核对规则文本，尚未运行真实构建验证排除效果。用户已有暂存和未暂存修改均保留。下一步由学习者创建根目录正式Dockerfile，先写Python 3.14 slim基础、WORKDIR /app、复制requirements和RUN安装依赖；讲解容器工作目录、构建时执行与依赖缓存，再补业务源码和启动命令。未代写功能、未运行测试、未构建镜像或提交Git。
+
+2026-10-20数据库host验收及Nginx教学收束：源码确认host已改为os.getenv读取TASK_MANAGER_DB_HOST、默认localhost。导师以两个独立子进程及虚构占位密码导入database.py，只检查URL.host，分别得到localhost和db；未连接数据库或运行完整测试。已合并Nginx v2实验结果、教学与真实交付边界及host配置知识，修正学习文档中v2尚未执行的旧状态。下一步先讲.dockerignore与.gitignore职责区别，由学习者在项目根目录创建构建排除规则；之后再编写正式Python Dockerfile。无业务代写、镜像构建或Git提交。
+
+2026-10-20镜像版本实验：用户反馈v2构建及8082/v1旧内容、8083/v2新内容对比符合预期，按用户反馈记录通过，助手未重跑。开始正式Task Manager容器化准备：核对api.py入口为api:app，requirements.txt已列依赖，database.py的数据库host仍硬编码localhost，密码/库名已可由环境变量配置。下一步先由学习者将host改为读取TASK_MANAGER_DB_HOST、默认localhost，保留本地兼容；后续再讲正式Dockerfile与.dockerignore及Compose独立数据库。当前未构建或运行正式API容器，教学v2实验成功不等于项目迁移完成。
+
+2026-10-20页面副本实验与知识合并：用户反馈web-built无挂载运行及8081/8082对比符合预期，源码核对本机h1为本机文件再次修改。已扩展学习文档原构建章节，合并文件来源、旧容器重启不更新、标签不自动升级容器的区别。HTTP行为依据用户反馈，本轮未自行请求网页、构建或运行容器、未运行项目测试或提交Git。下一步用户在examples/docker执行build -t task-web:v2 .，再用web-built-v2和8083创建新实例，对比v1/v2；当前未发现同名容器或8083监听，不删除旧实例。
+
+2026-10-20自定义镜像构建验收：用户反馈构建完成；导师只读查询确认task-web:v1存在、ID b2de1af8049d，Dockerfile仍正确。已合并cd/build/-t/点号、默认Dockerfile查找、构建与运行的边界及标签更新不影响旧容器。未重新构建或启动容器、未运行项目测试或Git提交。当前无web-built同名容器，8082未发现监听。下一步用户用task-web:v1创建web-built，在127.0.0.1:8082验证自定义页面且不使用挂载；再修改本机h1，对比8081绑定挂载更新、8082镜像副本不更新。不清理旧容器。
+
+2026-10-20 Dockerfile验收与知识合并：核对examples/docker/Dockerfile正确包含FROM nginx:alpine与COPY site/index.html到默认首页；源HTML存在且h1为修改后内容。已把上次文档更新后的绑定挂载参数、只读范围、遮蔽原内容、HTML结构、运行时挂载与构建时复制、FROM/COPY和构建上下文合并现有Docker章节。本轮仅读取源码及更新文档，未构建镜像、运行容器或测试、未提交Git。下一步由用户进入examples/docker，执行docker build -t task-web:v1 .，先讲解-t标签、点号与默认Dockerfile查找，之后查看镜像列表验收；自定义镜像运行留到下一轮。
+
+2026-10-20绑定挂载验收：用户反馈web-files只读绑定挂载两项验证符合预期，源码核对index.html标题已改为“修改后立即生效”；据用户反馈记录网页与实时修改实验通过，助手未重跑容器。下一步由学习者在examples/docker创建教学Dockerfile，以nginx:alpine为基础，将site/index.html复制到默认网页位置；先讲FROM/COPY、构建上下文和镜像快照与运行时挂载区别，再安排构建。本轮未代写Dockerfile、未运行测试或提交Git。
+
+2026-10-20知识合并与继续位置：已将上次整理后的列表与U标记、run/start及-a含义、具名容器、Nginx持续运行/-d、端口转发、静态资源/前端/业务后端/反向代理与HTTPS区别、logs/stop/start链合并到get_knowledge.md。用户反馈生命周期实验符合预期；本轮仅编辑文档，未重跑容器或项目测试、未提交Git。下一步先讲解bind mount，让本地HTML供Nginx读取；由学习者准备examples/docker/site/index.html，之后使用新容器web-files及8081只读挂载，不删除已有容器。只读检查未发现8081监听；挂载实验尚未执行。
+
+2026-10-20 Nginx实验：用户明确反馈run -d --name web-demo -p 127.0.0.1:8080:80 nginx:alpine、运行中列表及网页结果符合预期，按用户反馈记录完成；本轮助手未直接请求网页或运行容器。已讲解Nginx角色、后台分离、端口映射及持续运行取决于主程序。下一步讲解logs --tail 10、stop和start，用户自行观察请求日志、停止后网页新请求失败及启动后恢复；不删除容器，不重建或修改端口映射。本轮仅更新进度，无业务代码修改、项目测试或Git提交。
+
+2026-10-19具名实例实验：用户反馈run --name hello-second hello-world和ls -a结果符合预期，按用户反馈记录同镜像创建第二个实例已完成；助手未重跑。下一步先解释Nginx的网页服务角色、-d后台运行、-p 127.0.0.1:8080:80端口映射，再由用户运行持续网页服务实验，浏览器验证欢迎页及container ls中的Up状态。只读端口检查未发现8080监听；本轮未启动容器、修改业务代码或运行项目测试。
+
+2026-10-19容器生命周期观察：用户截图确认hello-world:latest镜像保留，镜像列表U表示被容器引用而非正在运行；container ls为空，ls -a显示cool_mendeleev、ID a0c5de43ac33、Exited (0)。已讲解COMMAND /hello、容器自动名称、ls -a的all与start -a的attach区别。用户反馈start -a cool_mendeleev及再次列表输出符合预期，按用户反馈记录原容器重启成功，未由助手重跑。下一步讲解run --name，根据同一镜像创建第二个具名容器，观察两个不同ID及镜像复用；不清理或删除现有容器。
+
+2026-10-19知识整理与继续位置：已检索并扩展get_knowledge.md现有Docker章节，合并安装/配置/磁盘路径区别、权限和WSL错误链、界面入口、PATH临时设置及凭据助手、工作目录边界、hello-world输出/标签/摘要/amd64、客户端与后台服务调用链及退出后状态。用户完整终端截图显示镜像下载成功、Hello from Docker及返回提示符，按用户证据记录该次最小容器实验已通过；本轮未重跑容器、未运行项目测试、未修改业务代码或提交Git。下一步先讲解并由用户执行docker image ls、docker container ls和docker container ls -a，对比镜像与停止容器的保留；暂不自动清理容器，不运行推荐Ubuntu示例。Windows重启后的启动尚无明确验证证据。
+
+2026-10-18 Docker启动排障历史记录（后续实验进展以上述2026-10-19记录为准）：用户明确授权备份并替换Docker配置目录，以恢复运行。独立文件重命名在C盘AppData目录复现WinError 17；目录带Encrypted属性，但具体系统来源未确定，管理员启动不能解决。已将原配置逐文件SHA256核对后备份至D:\DockerData\backup-before-config-relocation-20261018，并复制至D:\DockerData\config；原Roaming\Docker替换为指向该目录的Junction。仅目录链接仍无法稳定重命名，因此最终采用仅对Docker进程生效的USERPROFILE/APPDATA/LOCALAPPDATA，运行目录D:\DockerData\Profile；未修改Windows全局用户路径。C:\ProgramData\DockerDesktop\install-settings.json备份至D:\DockerData\install-settings-before-wsl-path.json，并设置wslDefaultDataRoot=D:\DockerData\wsl；未识别的临时WslDataFolder设置已移除。D:\Docker\Start-Docker-DDrive.ps1和桌面“Docker Desktop（D盘启动）”快捷方式保留此启动方式，以后使用该快捷方式。后续默认入口启动再次出现WSL失败；22:50以D盘目录和管理员方式重启，日志确认engine running且服务端29.8.2。已将桌面两个Docker快捷方式统一指向同一启动脚本。后续再次失败，完整日志确认WSL挂载数据VHDX报E_ACCESSDENIED，随后出现找不到wwid磁盘；localhost代理提示不是该失败链起点。实际快捷方式启动的后台TokenElevation=0，原权限检测在Windows PowerShell执行失败，先前仅语法检查不足。已重写为ASCII脚本（避免Windows PowerShell对无BOM中文脚本的解码兼容问题），用fltmc只读查询检测提升状态，失败时UAC提升；同时从全新D盘快捷方式复制重建两个桌面入口并设置RunAs标志。23:04、23:05分别从两个实际桌面快捷方式启动，中间执行docker desktop stop正常关闭；两轮均记录admin=True并读到服务端29.8.2，最后docker ps成功。临时启动跟踪语句已移除，脚本语法0错误；最终保留引擎运行。未重启Windows验证，底层C盘目录异常仍属绕过。WSL两个VHDX已在D盘创建，日志EngineRunningState，docker version返回服务端29.8.2，docker ps成功且无容器；尚未拉取hello-world或构建/启动项目容器，也未改动原PostgreSQL数据。属于经验证的目录绕过方案，未证明底层Windows目录问题已经根治。下一步由用户完成仍需本人操作的界面，再进行最小容器实验；无项目测试或Git提交。诊断文件保留D:\Docker\codex-rename-probe-8ee50406，配置备份暂保留以便回退。
+
+2026-10-18 Docker安装：用户明确委托创建D:\Docker、安装并打开，后续自行操作。已下载官方amd64安装包并核验Docker Inc有效签名；Docker Desktop 4.95.0.242831安装于D:\Docker，安装器退出0且日志Installation succeeded，CLI --version报告29.8.2，已启动桌面程序。使用WSL2后端，未代用户接受首次协议，未启动业务容器或验证引擎就绪。最初把WSL数据目录指定为安装目录内部被安装器拒绝，已取消该参数后成功；当前数据目录使用默认位置，不能宣称所有Docker数据均在D盘。下一步由用户处理首次界面，之后验证引擎和最小容器实验。安装包保留临时目录，未执行文件删除。
+
+2026-10-18历史环境检查（已由后续安装和排障记录更新）：已合并上次整理后命令行测试路径传递/输出捕获/退出码及友好异常，以及Docker整体用途、全栈位置、镜像/容器/Compose、网络、卷和数据迁移边界。只读环境检查：docker命令不可见，常见Desktop安装位置无文件；WSL 2.7.10.0、默认版本2、无用户发行版，未安装或启动Docker。Git已有3e45e54和3b2b37b两个本地提交，当前文档增量未提交。本轮无测试、无配置修改。下一步安装并启动Docker Desktop，使用WSL2/Linux容器后端，然后验证客户端/引擎；不得把无发行版误判为完全未安装WSL，暂不额外安装Ubuntu。
 
 2026-10-18 Git授权执行：用户明确确认已审阅两提交方案并授权执行。本地功能提交3e45e54（feat: add transactional legacy JSON import）包含导入实现、两份测试和README；教学规范、知识笔记及进度作为独立docs提交保存，提交后核对git log和工作区。未合并、打标签或推送，本轮未重复运行最近108 passed测试。接下来回到Docker导学，等待学习者解释两个容器中的localhost含义；尚未检查Docker环境。
 

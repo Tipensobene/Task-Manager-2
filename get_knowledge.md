@@ -641,6 +641,16 @@ argparse是Python标准库，用于把启动命令中的参数解析成Python属
 
 2026-10-18入口静态验收及三个测试通过：提供路径时打印正确且不创建文件；缺路径以2退出并报参数名；--help以0退出并显示帮助。monkeypatch临时替换sys.argv（列表首项为程序名，后续为用户输入）；capsys是pytest内置输出捕获fixture，readouterr()无参返回带out/err字符串的结果并清空本次捕获缓冲，分别检查标准输出和错误输出。pytest.raises(SystemExit) as error取得异常信息，error.value.code读取退出状态。当前仅跑无数据库测试文件52 passed，不能称为完整套件或最新全部导入测试结果。
 
+#### 命令行测试中的路径传递与输出断言
+
+测试中的tmp_path是目录fixture，file_path是测试局部Path变量；str(file_path)放到sys.argv第二项模拟用户输入。`monkeypatch.setattr(sys, "argv", [...])`虽未写字面量sys.argv，修改的就是sys模块argv属性。main里的parser.parse_args读取sys.argv[1:]，按type=Path转换后存入args.file_path，再作为实参传给导入函数；替代函数fake_import_file(path)的普通形参path此时才绑定到该值，不是fixture。路径链为file_path→命令行字符串→args.file_path→path→received_paths[0]。测试和main不共享局部变量，相同路径不要求对象身份相同。带空格路径置于argv一个元素中验证参数可包含空格，不覆盖Shell引号解析。
+
+入口最初只打印路径，故捕获输出去换行后与str(file_path)比较；后续已改成调用导入函数并输出数量/映射，旧断言已更新。现在替代导入函数记录收到的Path并返回{3:101,8:102}，断言调用一次、类型为Path，输出splitlines后为["2", "{3: 101, 8: 102}"]；替代函数不读文件或连接数据库。不能把测试的模拟结果当作真实历史文件已导入。
+
+main在parse_args之后捕获OSError、ValueError和SQLAlchemyError，再parser.exit(status=1, message=f"导入失败，{error}\\n")。exit默认status=0、message=None，有消息时写标准错误并抛SystemExit，不正常返回；实际使用换行字符，不是输出字面量反斜线n。原始异常先退出导入函数的事务块完成回滚，再由main转换为友好提示。密码环境变量缺失的KeyError不在当前友好捕获范围内。
+
+`captured = capsys.readouterr()`一次取回out/err并清空本次捕获缓冲，返回对象仍可重复检查。captured.out==""确认失败没有打印成功结果；"导入失败" in captured.err确认失败说明位于标准错误；str(import_error) in captured.err确认提示保留实际异常原因。str(ValueError("原因"))得到"原因"，通常不含异常类名。缺参和--help的SystemExit由parse_args库内部产生，发生时args赋值和后续导入都不执行，测试在main调用外用raises接住，分别断言退出2和0。最终入口错误模拟覆盖文件、数据和SQLAlchemy异常，完整回归108 passed，真实JSON尚未导入。
+
 ### 文件导入事务与monkeypatch失败模拟
 
 import_legacy_file先load_legacy_tasks校验完整文件，再在函数内导入SessionFactory，用`with SessionFactory.begin() as session`调用import_legacy_tasks，正常退出提交并关闭会话，异常退出回滚并关闭会话，退出成功后返回ID对照。函数内导入避免仅使用输入模型时就读取数据库密码配置。单纯with SessionFactory()只管理会话关闭，不自动提交；不在begin块内逐条commit或吞掉异常，确保整批事务边界有效。
@@ -668,6 +678,482 @@ tmp_path是pytest内置的函数级fixture，通过测试参数名请求，不�
 本次空文件列表测试流程是：pytest准备临时目录→写入JSON []→关闭写文件→load_legacy_tasks重新打开解析→断言返回[]。2026-10-17实际独立测试文件37 passed，其中新增一项空JSON列表读取；此结果不代表正常多记录读取、错误文件或数据库导入已经验证。
 
 参考：[pytest临时目录说明](https://docs.pytest.org/en/stable/how-to/tmp_path.html)。
+
+## Docker导学：把可运行代码交付为可复现环境
+
+Docker用于准备、隔离、分发和运行应用环境，属于运行交付层。前端负责展示交互，后端负责请求与业务，PostgreSQL负责数据，Docker可以承载这些服务但不替代业务代码。引入它是为了解决换机器后Python/依赖/数据库版本、启动方式和配置不一致的问题；本机程序能运行不等于别人已能按配置复现，也不等于生产部署已完成。
+
+通俗类比：只交付代码像给别人菜谱，还得自行准备厨房设备；镜像像准备好的标准运行模板，Dockerfile是制作模板的步骤，容器是按模板启动的实际运行实例，Compose是安排多个运行单元协作的配置。类比不是打包整个Windows/PyCharm。容器技术上是隔离的进程及其文件、依赖和网络等环境，Linux容器共享所在Linux运行环境的内核，并非每个容器都有独立内核；Windows上通常借助Docker Desktop及WSL等提供Linux环境。
+
+镜像Image是只读模板，容器Container是基于镜像创建的实例；Dockerfile描述构建Python环境、安装依赖、复制应用代码及启动方式。Docker Compose用配置文件组织API、PostgreSQL等多个服务，说明镜像、环境变量、网络、端口和存储关系。venv主要隔离Python包，不负责运行独立PostgreSQL或管理容器网络和卷；Docker与IDE/本地开发可以并存，并非必须把全部组件容器化。
+
+目标链为浏览器HTTP→端口映射→API容器Uvicorn/FastAPI→Service/Repository→容器网络→PostgreSQL容器→持久卷。API与数据库各自管理，代码更新可替换API实例。容器内localhost指自身；同一Compose网络中host=db按服务名查找数据库服务，名字必须真实可解析，不是任意文本。host选择哪个PostgreSQL服务，database选择该服务内部哪个数据库。原先同一PostgreSQL内切换learning/test只改database，访问不同服务则要改host及对应凭据/端口。配置更改需要相应进程重新读取，已有连接不自动切换。
+
+Volume保存容器生命周期之外的数据，替换容器不必丢失数据库文件；它不等于备份，不会自动带上本机数据库或JSON旧数据。Alembic仍负责表结构，Docker创建数据库服务不等于自动应用迁移；导入功能仍需另外明确运行。本节交付Dockerfile、Compose及运行说明，验证构建、迁移、API请求、容器重建和持久化；暂不扩展Kubernetes或云部署。导学完成不代表已安装或掌握。
+
+### WSL软件版本、运行方式与Linux发行版
+
+WSL全称Windows Subsystem for Linux（适用于Linux的Windows子系统），让Windows电脑可以运行Linux环境，无需将原有Windows替换掉；Windows应用与Linux程序可以同时使用。
+
+“WSL 2.7.10”和“默认版本为2”描述不同维度：前者是WSL软件自身的版本号，原检查完整显示2.7.10.0；后者表示新安装的Linux发行版默认采用WSL 2运行方式，而不是旧的WSL 1。不能把2.7.10理解为WSL运行方式有一个叫“2.7”的代际，也不能仅凭默认版本设置认定Docker引擎已经可用。
+
+项目准备运行Linux容器，需要Linux内核支持。使用WSL 2后端时，可理解为Windows提供宿主环境→WSL 2提供Linux运行基础→Docker Desktop利用该环境管理API和PostgreSQL等容器。这是便于理解的依赖关系，不表示每个容器各自运行一套完整操作系统。通俗比喻：Windows是原来的房子，WSL 2提供能运行Linux的一块空间，Docker管理其中的应用运行单元。
+
+Linux发行版是Ubuntu等具体的Linux系统环境。WSL软件已安装，但没有用户自行安装的发行版，并不矛盾；Docker Desktop会管理其所需环境，当前不要求先额外安装Ubuntu。WSL、用户发行版和Docker是否安装/可用，应分别检查。
+
+2026-10-18主对话只读检查记录：docker不在当时PATH，Docker Desktop全用户及常见用户安装路径未找到；WSL可执行文件存在，--version报告2.7.10.0，默认版本2，当时没有用户Linux发行版。该记录不代表之后安装状态，也不证明Docker引擎可用。侧边对话本次仅补充概念，没有重新检查环境、安装软件或启动容器。
+
+### Windows安装、启动入口与排障边界
+
+本机Docker Desktop安装程序位于`D:\Docker`。安装目录、用户配置目录、虚拟磁盘目录是不同概念，安装到D盘不自动代表所有数据都在D盘。当前采用独立目录绕过方案：配置在`D:\DockerData\config`，Docker进程使用的用户目录在`D:\DockerData\Profile`，WSL虚拟磁盘在`D:\DockerData\wsl`。桌面两个快捷方式均调用`D:\Docker\Start-Docker-DDrive.ps1`，按需请求管理员权限；这些环境设置只影响该次Docker及子进程，不修改Windows全局用户目录。直接运行原始exe不等同于经过该启动脚本。
+
+排障应沿完整错误链寻找起点：最初C盘AppData中独立文件重命名也失败，目录带Encrypted属性，但没有查明底层系统原因，D盘方案属于绕过。后续WSL错误链为“挂载Docker数据VHDX被拒绝访问（E_ACCESSDENIED）→Linux中看不到对应磁盘→bootstrap报找不到wwid磁盘”。同屏出现的localhost代理警告不能直接当成根因。启动脚本的旧权限检测存在执行兼容问题，最终改用ASCII脚本、fltmc只读权限检查和快捷方式RunAs标志；失败则请求UAC提升。只通过脚本语法检查不足以证明实际启动具有管理员权限。
+
+Docker Desktop左下角`Engine running`表示引擎在运行，`Containers`为空表示当前没有显示的容器，不是故障。`Images`查看镜像，`Containers`查看容器及状态，`Logs`查看输出，`Volumes`管理持久存储。当前学习使用英文原版界面；官方中文界面需求仍未完成，不为学习依赖第三方汉化替换程序文件。许可协议需要使用者阅读并自行决定是否接受；协议窗口与启动错误是不同事情。
+
+验证应分层：引擎一次启动成功、正常退出后重复启动成功、Windows重启后成功、实际拉取并运行容器成功，分别需要证据。此前两个桌面入口重复启动已验证；用户后来再次进入Engine running界面，不据此自动记录为Windows重启已验收。
+
+### PowerShell如何找到Docker：PATH与完整路径
+
+`PATH`是操作系统查找可执行程序时使用的目录清单。旧的PyCharm终端可能没有加载安装后的路径；Python虚拟环境激活与Docker是否能被找到是两回事。`docker`命令无法识别意味着客户端尚未执行，不是Docker引擎报错。
+
+```powershell
+& "D:\Docker\resources\bin\docker.exe" run hello-world
+```
+
+`&`是PowerShell调用运算符，用于执行引号内路径指向的程序。完整路径可以找到主程序，但Docker还可能调用`docker-credential-desktop.exe`等辅助程序；辅助程序仍需通过PATH查找。因此“主程序可以执行，但凭据助手不在PATH”不代表密码错误。
+
+```powershell
+$env:Path = "D:\Docker\resources\bin;" + $env:Path
+docker run hello-world
+```
+
+第一行在原目录清单前增加Docker程序目录；分号分隔Windows PATH中的目录。只影响当前终端及后续子进程，关闭后不永久保留，不是修改项目文件或Python依赖。启动脚本中设置Docker后台的运行目录，与另一个PyCharm终端的PATH是两项独立配置。
+
+`docker run hello-world`使用镜像名称，不读取当前目录里的项目代码，因此可以在任意工作目录执行，也不会将镜像下载到当前文件夹。后续`docker build .`中的`.`表示当前构建上下文目录，工作目录会影响行为；构建时再展开。
+
+### hello-world：从命令到容器退出的完整流程
+
+`docker`是客户端；`run`请求根据镜像创建并启动一个新容器；`hello-world`是镜像名称，省略标签时默认为`latest`。标签是可更新的名称引用，`latest`不是保证发布时间最新的特殊比较规则。默认本地缺镜像时尝试拉取，已有时使用本地镜像。
+
+```text
+PowerShell命令 → docker.exe客户端 → Docker后台服务（daemon）
+    → 检查本地镜像 → 缺少则从Docker Hub下载
+    → 根据镜像创建新容器 → 启动容器内程序
+    → 后台服务转发程序输出 → 客户端 → 终端
+    → 程序执行结束 → 容器停止，命令返回提示符
+```
+
+| 输出 | 含义与判断 |
+| --- | --- |
+| `Unable to find image 'hello-world:latest' locally` | 本地没有镜像，接下来会尝试下载；单独这一行不是最终失败 |
+| `latest: Pulling from library/hello-world` | 从Docker Hub的官方仓库拉取latest标签 |
+| 短标识加`Download complete`或`Pull complete` | 对应下载对象或镜像层处理进度；多行不表示创建了多个容器 |
+| `Digest: sha256:…` | 精确标识镜像内容的摘要；与可重新指向其他内容的标签不同 |
+| `Status: Downloaded newer image ...` | 本次镜像拉取成功；不证明本地先前一定有旧版 |
+| `Hello from Docker!` | 容器中的程序实际输出欢迎信息，证明本轮下载、创建、执行及输出链成功 |
+| `(amd64)` | 使用x86-64架构镜像，不要求CPU必须为AMD品牌 |
+
+下载进度由Docker工具输出，欢迎文字由容器中的程序输出，两者都显示在同一个终端。欢迎信息中四个步骤对应客户端联系后台、后台下载镜像、创建容器执行程序、转发输出；其中推荐的`docker run -it ubuntu bash`只是文字示例，没有自动执行或额外安装Ubuntu。
+
+hello-world打印完成就退出，不像API服务持续等待请求。未使用自动清理选项时，镜像和停止的容器记录仍保留；容器停止不等于镜像被删，也不等于引擎关闭。再次执行`docker run hello-world`会创建另一个新容器，不是自动复用上次实例。当前实验没有端口映射、数据库服务或项目代码容器化，也不能替代项目交付验收。
+
+截至2026-10-19，用户提供完整终端截图，包含拉取完成、摘要、`Hello from Docker!`以及返回PowerShell提示符，证明该次最小容器实验成功。后续学习镜像列表与运行中/全部容器列表，先通过观察验证三者的生命周期区别。
+
+### 查看、创建与重新启动容器
+
+`docker image ls`列出本地镜像；新版输出可能将名称和标签合并为IMAGE列。U（In Use）表示镜像被容器引用，不保证有容器正在运行。`docker container ls`默认只列运行中容器，`docker container ls -a`包含停止的容器，-a为--all。CONTAINER ID是实例标识，IMAGE是来源模板，COMMAND是启动程序，STATUS中的Exited (0)表示正常退出，PORTS显示端口映射，NAMES是实例名称。未指定名称时Docker自动分配，例如cool_mendeleev。
+
+`docker container start -a cool_mendeleev`重新启动原容器，ID不变；这里-a为--attach，把运行输出连接到终端，与ls -a含义不同。不带-a的start启动后返回终端。`docker run --name hello-second hello-world`根据已有镜像创建第二个容器；实例共用镜像层，不重复保存完整相同镜像。--name指定容器名称，不是镜像名称；名称须唯一，停止的容器也占用名称。重复同名run会冲突，需要区分创建新实例与启动已有实例。
+
+### 持续运行的Nginx与端口映射
+
+Nginx是服务端Web服务器软件；本轮使用其默认静态首页，不是Task Manager API。实验命令：
+
+```powershell
+docker run -d --name web-demo -p 127.0.0.1:8080:80 nginx:alpine
+```
+
+-d是--detach，启动后终端与容器分离，通常输出容器ID；不是把短命程序变成常驻服务。Nginx持续等待请求，因此保持Up；hello-world即使用-d也在程序结束后退出。nginx:alpine是镜像名及基于Alpine Linux的标签。-p为--publish，格式为宿主地址:宿主端口:容器端口，此例提供本机127.0.0.1:8080入口，转发至容器内80；默认使用TCP。不把Nginx自身监听端口改为8080。
+
+```text
+Windows浏览器请求http://127.0.0.1:8080/
+ → Docker端口转发 → 容器内80端口的Nginx
+ → 读取默认HTML → 经连接返回浏览器 → 浏览器解析并绘制页面
+```
+
+8080和80不是前后端两个服务的端口，而是同一服务在宿主机和容器网络中的访问位置。这里转发的仍是HTTP请求，不转换成其他业务请求；Python客户端访问同一地址也可以使用入口。
+
+### Nginx、前端页面和业务后端的职责
+
+前端资源是浏览器使用的HTML/CSS/JavaScript等；Nginx提供资源，不等于它是前端框架。镜像自带HTML，Nginx读取并发送，浏览器渲染。服务器能够返回页面，不代表它是一套完整全栈体系。
+
+按浏览器端/服务端划分，Nginx属于服务端；按业务职责划分，它通常提供静态资源、作为流量入口，而标题校验、任务创建和事务等由FastAPI/Service负责，PostgreSQL负责存储。反向代理是接收请求后按规则转交其他服务，再将响应返回客户端。后续可以为浏览器→Nginx，静态文件直接返回，API请求转给FastAPI→PostgreSQL；当前没有配置反向代理或运行Task Manager容器。
+
+HTTPS通过TLS加密传输HTTP，处理HTTPS的能力不决定软件属于前端还是业务后端。当前地址是HTTP，没有配置HTTPS或证书。本节只理解角色，不要求每个项目先引入Nginx。
+
+### 绑定挂载：让Nginx读取Windows上的页面
+
+绑定挂载（Bind Mount）把指定宿主文件或目录映射到容器内路径，不是复制，也不修改镜像。本次源目录为D:\Python\Project\Task_Managers_2\examples\docker\site，目标为/usr/share/nginx/html。Linux容器路径与Windows来源路径可以完全不同；Docker Desktop负责让Linux容器访问所指定的本机文件。
+
+```powershell
+docker run -d --name web-files -p 127.0.0.1:8081:80 --mount "type=bind,source=D:\Python\Project\Task_Managers_2\examples\docker\site,target=/usr/share/nginx/html,readonly" nginx:alpine
+```
+
+--mount登记挂载关系，双引号将逗号分隔的配置作为一个完整参数传入。type=bind指定绑定挂载，source为本机来源，target为容器内目标，readonly禁止容器通过挂载路径写入本机文件；默认未指定只读则允许写入。readonly不限制用户在Windows上编辑源文件。此处--mount默认要求源路径已存在，否则报错，不会自动准备HTML文件。使用绝对来源路径时命令不依赖当前工作目录。新容器使用8081，与原web-demo的8080分开。
+
+浏览器请求8081→转发至web-files的80→Nginx读取/usr/share/nginx/html/index.html→通过挂载读取Windows中的site/index.html→返回页面。挂载到已有内容的目录会遮住容器原有文件，并非删除镜像中的默认首页。未写挂载时原始镜像仍提供自带页面。
+
+用户创建的HTML包含doctype、lang、UTF-8字符编码、title、body、h1和p；title是标签页标题，body中的h1/p是页面标题及段落。index.html保存后，用户反馈网页显示自定义内容，修改h1为“修改后立即生效”并强制刷新即可看到变化，无需重启Nginx或重建镜像。这里是每次请求读取文件，不等同于所有框架都自动热更新。Bind Mount依赖宿主路径，不能仅交付镜像就假定别的机器已有同一路径；Docker管理的命名卷与其不同，后续结合数据库持久化再展开。
+
+### Dockerfile、FROM/COPY与构建上下文
+
+Dockerfile是制作镜像的文本步骤文件，不是Python模块或容器。保存文件只是写下步骤，不自动执行构建，也不启动服务。当前教学文件为examples/docker/Dockerfile，与site目录同级，无.txt后缀：
+
+```dockerfile
+FROM nginx:alpine
+COPY site/index.html /usr/share/nginx/html/index.html
+```
+
+FROM指定基础镜像，本例保留Nginx程序、默认配置及启动方式。COPY的源site/index.html相对于构建上下文，目标是新镜像内的绝对路径。构建上下文是本次提供给构建器的材料目录；后续指定examples/docker为上下文才能直接找到site/index.html。源不是按终端任意目录解析，也不能仅因Dockerfile放在某处就默认所有构建都以该处为上下文。
+
+构建时COPY读取页面内容并保存到新镜像，源文件不被删除或修改，基础nginx:alpine镜像也不变。运行新镜像时无需依赖原Windows目录；之后修改本机HTML不会自动更新已有镜像或容器，需要重新构建并使用新镜像创建实例。仅start旧容器不采用新构建的文件。相对地，绑定挂载是在运行时读取本机文件，不更新镜像。两种方式分别适合开发中的文件共享和把构建时内容交付为镜像。
+
+### 执行构建：build、镜像标签与点号
+
+```powershell
+cd D:\Python\Project\Task_Managers_2\examples\docker
+docker build -t task-web:v1 .
+docker image ls
+```
+
+cd切换工作目录；build根据Dockerfile构建镜像，-t（--tag）给结果指定名称task-web和标签v1，点号指定当前目录为构建上下文。未用-f指定文件时，默认从上下文根目录查找Dockerfile。本例上下文为examples/docker，因此COPY能找到site/index.html。点号不是镜像名称或输出位置；镜像由Docker存储，不会在当前目录生成一个名为task-web的文件。
+
+以第二次构建为具体例子：
+
+```powershell
+docker build -t task-web:v2 .
+```
+
+| 命令部分 | 输入含义与执行作用 |
+| --- | --- |
+| docker | 调用命令行客户端，将构建请求交给构建器 |
+| build | 制作镜像；与run创建并启动容器不同 |
+| -t task-web:v2 | --tag的简写，为构建结果登记名称task-web、标签v2 |
+| . | 当前工作目录，指定本次构建上下文，不是结尾标点 |
+
+task-web与v2均由使用者命名，不要求镜像名等于项目目录名。冒号分隔名称与标签，改成task-web:practice同样合法；v2不会让Docker自动寻找v1、检查业务版本或执行升级。同一份构建内容可以有不同标签，标签本身不是内容发生变化的证据。
+
+点号与COPY的关联可代入实际路径理解：
+
+```text
+先cd到 D:\Python\Project\Task_Managers_2\examples\docker
+    ↓
+build最后的 . 指定这个目录为材料目录
+    ├─ Dockerfile：默认在材料目录根部查找的制作步骤
+    └─ site/index.html：COPY指令声明的材料相对路径
+            ↓
+实际源文件为
+D:\Python\Project\Task_Managers_2\examples\docker\site\index.html
+            ↓
+复制构建时的文件内容到新镜像的
+/usr/share/nginx/html/index.html
+            ↓
+保存结果，登记名称标签 task-web:v2
+```
+
+因此切换到别的工作目录仍执行同样命令，会改变点号代表的位置，可能找不到Dockerfile或COPY来源文件。Dockerfile是步骤，构建上下文是材料范围，task-web:v2是结果名称，三者不是同一个对象。构建v2后，本机HTML仅被读取、基础nginx:alpine与原task-web:v1保留、旧web-built仍使用原镜像内容；不会凭这条build命令创建或启动新容器。上述为命令讲解，不代表本轮已实际执行v2构建。
+
+实际流程为读取Dockerfile→取得基础镜像nginx:alpine→将构建时HTML复制进新镜像→为结果登记task-web:v1名称引用。构建可能复用缓存，也可能请求仓库元数据，并非只要本地有基础镜像就保证完全不联网。构建成功不自动启动容器、不改变原nginx:alpine，也不改变已运行的web-files。重新使用同一标签构建会更新标签指向，不自动更新已有容器。
+
+2026-10-20用户反馈构建完成，导师实际查询本地镜像列表确认task-web:v1存在，短ID为b2de1af8049d。随后用户运行以下命令并反馈网页及对比结果符合预期：
+
+```powershell
+docker run -d --name web-built -p 127.0.0.1:8082:80 task-web:v1
+```
+
+此命令没有--mount，因此web-built读取镜像里的页面副本。用户将本机h1从“修改后立即生效”改成“本机文件再次修改”，保存并强制刷新后，8081的web-files显示新文字，8082的web-built仍显示构建时旧文字。导师核对源文件确已修改，HTTP现象依据用户反馈，未自行重跑或访问网页。
+
+页面是否更新取决于读取来源，不单取决于是否重启：绑定挂载容器读取本机当前内容，无挂载容器读取镜像提供给实例的内容；重启web-built仍使用原实例，不会重新COPY本机文件。交付新内容应重新构建并用新镜像创建容器。给镜像命名v1/v2只是人为版本标签，不会自动构建、监控文件变化或迁移旧容器；已有容器不会因新版本镜像出现而自动升级。
+
+Nginx教学入口为8080默认首页、8081本机只读挂载、8082自定义v1镜像副本、8083自定义v2镜像副本。用户已反馈v2构建和新容器对比符合预期：8082仍是旧标题，8083显示修改后的标题；依据用户反馈记录实验完成，不将端口或网页文字当成镜像身份标识。构建新版本与运行新实例是两个明确动作，旧实例保留原内容。未执行远程推送或实际生产发布；这个最小静态网页流程通过，不等于正式Task Manager容器化已完成。
+
+### 从Nginx练习迁移到Task Manager：数据库地址可配置
+
+正式请求链准备为浏览器→API容器中的Uvicorn/FastAPI→PostgreSQL容器。Nginx作为基础教学工具，不是本阶段必须再添加的业务层。当前项目入口为api:app；数据库密码与库名已有环境变量配置，但原host硬编码localhost。API进入容器后，localhost指API容器自己，不是Windows，也不是另一数据库容器。
+
+```python
+host=os.getenv("TASK_MANAGER_DB_HOST", "localhost"),
+```
+
+os.getenv的第一个参数是变量名，第二个是变量不存在时的默认值。未提供时保持本地开发兼容；后续Compose若将数据库服务命名为db，则在API运行环境提供TASK_MANAGER_DB_HOST=db。db不是固定魔法名称，只有实际服务与网络支持解析时才可用。读取变量并创建URL本身不连接数据库；变量由启动进程的运行环境提供，不写入镜像中的密码。这里只将host改为可配置，未同时实现全部数据库参数配置，也未验证容器间连通性。
+
+相关参考：[绑定挂载](https://docs.docker.com/engine/storage/bind-mounts/)、[Dockerfile](https://docs.docker.com/reference/dockerfile/)。
+
+### 正式项目的构建排除规则与Python依赖安装
+
+根目录.dockerignore排除构建上下文中的文件，与.gitignore控制Git跟踪的职责不同；被Git忽略不保证被Docker忽略，也不会因写排除规则而删除本机文件。当前排除.git、Windows虚拟环境、IDE配置、Python/pytest缓存、.env与.env.*、data及日志。.env.*也匹配.env.example，后续如需将示例加入构建材料再明确调整。这里只是按名称排除，不代表所有可能的秘密文件都已自动识别。尚未实际构建验证规则效果。
+
+正式根目录Dockerfile的环境准备部分：
+
+```dockerfile
+FROM python:3.14-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN python -m pip install --no-cache-dir -r requirements.txt
+```
+
+FROM提供Linux中的Python 3.14精简环境，不使用本机.venv。WORKDIR将后续工作目录设为/app，不存在时创建；这是镜像/容器路径，不切换Windows终端目录，也不自动复制文件。COPY的来源requirements.txt相对于构建上下文，目标点号指当前镜像工作目录，所以结果是/app/requirements.txt。这与build命令末尾点号指定宿主构建上下文的含义应按位置区分。
+
+RUN是Dockerfile指令，要求构建器在构建环境执行后面的命令；python调用镜像中的解释器，-m pip运行该解释器对应的pip模块，install请求安装，-r（--requirement）按文件读取安装要求。清单中的==固定对应包版本，pip还会处理其依赖。安装发生在镜像的Python环境，不改变Windows虚拟环境；缺包、版本冲突或网络故障可能使构建失败。保存Dockerfile本身不会执行RUN。
+
+--no-cache-dir不使用或保存pip下载/构建缓存，但安装好的软件包仍保留；它不关闭Docker层缓存。先COPY清单再安装、后复制业务代码，可让仅改业务代码时有机会复用依赖安装层，是否复用仍取决于输入和缓存状态。整个顺序为准备Python→设置/app→复制清单→在/app按清单安装依赖。2026-10-20已核对上述四条指令正确，尚未实际构建或安装容器内依赖。
+
+### 复制正式源码与登记API启动命令
+
+依赖安装之后追加COPY . .：第一个点号为构建上下文中的内容（受.dockerignore影响），第二个点号为当前镜像工作目录/app。构建后得到/app/api.py等源码；先安装依赖再复制源码，避免只修改源码时不必要地使依赖层缓存失效。
+
+```dockerfile
+COPY . .
+CMD ["python", "-m", "uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+RUN在构建时执行安装等命令；CMD将默认运行命令保存在镜像配置中，启动容器时才执行，可被运行参数覆盖。exec形式使用JSON数组和双引号，每个元素是一项程序或参数，不是Python列表求值；不默认经Shell处理管道或变量展开。此例实际运行python -m uvicorn api:app --host 0.0.0.0 --port 8000。构建不因CMD而导入api或启动服务器；运行时导入api会读取数据库配置，届时仍需提供密码等变量。
+
+api:app遵循模块名:对象名，可近似理解为from api import app。api对应api.py，但模块导入名不带.py；冒号后app为文件中的FastAPI实例，不是文件名的重复。包结构可写backend.api:app，但必须能导入对应包。WORKDIR /app与复制的/app/api.py使当前入口可被找到。
+
+Uvicorn的--host是API接收请求的监听地址，不是database.py中连接PostgreSQL的host。127.0.0.1只监听容器内部回环接口；Docker通常将发布端口流量转发到容器网络接口，因此API监听0.0.0.0以接收容器各IPv4接口上的请求。0.0.0.0不是整个互联网，不会自动发布端口，也不是浏览器应输入的地址；本机入口仍由运行时-p等映射决定。--port 8000指定容器内监听端口，不自动创建Windows端口映射。当前不使用开发用--reload。
+
+截至2026-10-20正式根目录Dockerfile六条指令文本核对通过；尚未实际构建、验证Linux依赖安装或运行正式容器。下一步在项目根目录构建task-manager-api:v1；镜像构建无需提供数据库密码，API运行及数据库连通仍需后续独立验证。
+
+### 正式镜像构建中的网络错误与验证边界
+
+首次构建在FROM阶段获取Docker Hub匿名token时超时，尚未安装Python依赖；单独docker pull python:3.14-slim成功后继续构建。anonymous token是拉取公开镜像时工具自动获取的访问凭证，不是数据库密码，也不直接说明必须登录。读取本地基础镜像不保证构建绝不联网查询元数据。
+
+随后pip访问https://pypi.org/simple/fastapi/时出现TLS UNEXPECTED_EOF_WHILE_READING：加密连接尚未读完便意外结束。索引读取失败后显示versions:none和No matching distribution，不足以证明版本不存在，也不足以证明一定是证书不受信任。先区分下载连接、包是否存在、版本兼容与实际安装，不仅凭最后一行改版本或关闭证书校验。
+
+导师实际复现过失败，同时在普通基础容器及最小构建环境用urllib/pip查询成功并查到0.142.2；再次原样构建成功，生成task-manager-api:v1，ID e1f25dc2ed2c。没有修改源码、Dockerfile、下载源或依赖版本，现象符合间歇性网络中断，具体网络根因未确定。独立容器运行python -m pip check返回No broken requirements found，只验证已安装包的声明依赖一致性，不等于API已能启动、数据库可连接或完整测试已通过。诊断容器已停止，未删除。
+
+### Compose与YAML：用数据描述多个服务
+
+Dockerfile负责单个镜像如何制作，Docker Compose负责按配置组织构建、服务、网络、端口及存储。Compose是工具，compose.yaml是它读取的配置文件。YAML是记录结构化数据的文本格式，不是Python代码，也不是容器；.yaml与.yml都是常见扩展名。保存配置不自动运行服务，需要之后调用Compose命令。
+
+```yaml
+services:
+  api:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+```
+
+等价的数据层级可用Python字典理解为services包含api，api包含build字符串和ports列表。冒号后空格分隔键和值，空值位置的下一层缩进描述所属内容；统一每层两空格，不使用Tab。短横线表示列表元素，不是命令行选项。端口映射加双引号，作为完整字符串。YAML规定数据如何书写，Compose规定services/build/ports等键的用途。
+
+services登记服务集合，api是使用者选择的服务名，不自动对应api.py；Python入口由Dockerfile的CMD中api:app决定。build: .以Compose文件所在目录为构建上下文，默认读取其中Dockerfile；ports配置宿主与容器端口。不写image时，Compose构建使用默认项目名/服务名生成镜像名称，不能认为一定自动复用手工命名的task-manager-api:v1。共享默认网络后可以按真实服务名查找其他服务，数据库服务将在后续添加为db。
+
+2026-10-20当时只有api配置，导师执行docker compose config --quiet退出0。config读取Compose文件，合并配置、解析YAML结构并替换变量占位符，检查最终数据模型；--quiet只校验而不打印展开后的完整配置，成功时通常无输出并退出0。若必填TASK_MANAGER_CONTAINER_DB_PASSWORD未设置或为空，插值规则会导致校验失败。此命令不会启动容器、创建表或连接数据库，不能证明密码与库内密码一致、数据库就绪、8000端口可用或API业务正常；服务运行后仍需实际HTTP/SQL验证。可以类比为检查方案写法而非执行方案。普通config可能展开密码，涉及凭据时不随意打印完整配置。
+
+### API自制镜像与数据库官方镜像
+
+一个Compose应用可以由多个不同镜像的容器协作，不要求全部软件装进一个镜像。根目录Dockerfile以python:3.14-slim为基础安装Python依赖并复制Task Manager源码，制作的是API镜像，没有安装PostgreSQL服务器。api的build: .使用这份Dockerfile；db的image: postgres:18直接使用官方已制作发布的数据库镜像，当前不需要再写数据库Dockerfile。官方镜像也有其构建过程，只是不由本项目重复实现。API容器通过网络连接数据库容器，而不是把Python安装与数据库安装看成同一个过程。
+
+db的environment将变量传给数据库容器。POSTGRES_USER指定初始化用户名，POSTGRES_DB指定初始化数据库名，POSTGRES_PASSWORD指定初始化密码；这些是官方镜像识别的名称，与API自己读取的TASK_MANAGER_*不同，不自动传给其他服务。首次空数据目录初始化会创建用户/数据库，但不会创建Task Manager业务表，表结构仍由Alembic迁移。已有数据目录初始化完成后，修改这些变量不自动重命名库或修改用户密码。
+
+`${TASK_MANAGER_CONTAINER_DB_PASSWORD:?请先设置容器数据库密码}`是Compose变量插值：从外部获取变量，缺失或为空则报指定错误；不生成密码，也不把变量名当密码。当前使用独立名称区分容器数据库与本机原库。写变量引用不需要把实际密码保存进Compose文件或镜像；API后续还需显式传入对应连接配置。
+
+2026-10-20核对compose.yaml已包含平级db/api，db使用postgres:18和上述三项环境配置，API已有build及ports。服务在YAML中的书写顺序不等于数据库实际就绪顺序。尚未启动、创建数据库、配置数据卷或连接原库。
+
+### 两处environment与启动到查询的执行链
+
+environment语法相同，但按所在服务分别传递：db.environment只进入数据库容器，api.environment只进入API容器，彼此不自动共享。前者告诉官方初始化程序“数据库首次建成什么样”，后者告诉我们的Python代码“去连接哪个已有数据库”。同一个外部TASK_MANAGER_CONTAINER_DB_PASSWORD通过Compose插值，分别变成db内POSTGRES_PASSWORD与api内TASK_MANAGER_DB_PASSWORD，值一致但名称、读取程序和用途不同。
+
+本轮添加api.environment与Python代码的直接关系（2026-10-21补充）：配置不是写给URL.create自动识别的，而是先由Compose传入API进程环境，再由已有Python语句读取。对应如下：
+
+| api.environment中的配置 | database.py中的读取语句 | 本轮改变的实际值 |
+| --- | --- | --- |
+| TASK_MANAGER_DB_HOST: db | os.getenv("TASK_MANAGER_DB_HOST", "localhost") | 从默认localhost变为db服务地址 |
+| TASK_MANAGER_DB_NAME: task_manager_container | os.getenv("TASK_MANAGER_DB_NAME", "task_manager_learning") | 从默认本机练习库名变为容器库名 |
+| TASK_MANAGER_DB_PASSWORD: ${TASK_MANAGER_CONTAINER_DB_PASSWORD:?...} | os.environ["TASK_MANAGER_DB_PASSWORD"] | 从外部取得与数据库初始化一致的密码 |
+
+修改前后可以这样比较：仅配置db.environment时，数据库知道如何初始化，但API不会自动继承它的变量；若API环境未另行提供变量，host仍默认localhost（指API容器自身），库名仍默认task_manager_learning，密码缺失则在读取时抛KeyError。加入api.environment后，读取结果改为db、task_manager_container及外部密码，才能与数据库一侧约定的连接条件对应。实际能否连接仍需网络、数据库就绪及认证等后续验证。
+
+URL.create本轮无需改写；改变的是传入它的实际配置值。username="postgres"和port=5432本轮没有修改，分别与数据库用户和容器内端口保持一致，不能将背景参数解释成新增配置。关键链条为“新增Compose配置→容器进程环境变量→Python读取→构造连接目标”，不是直接从一个容器读取另一个容器的environment。
+
+构建与启动要分开理解：compose.yaml的build: .只描述需要构建时的材料位置；构建器读取Dockerfile，执行RUN等构建步骤，把CMD保存进镜像。Compose根据镜像启动容器时，才执行保存的默认CMD；不会每次启动都重跑整个Dockerfile，也不是build配置项直接执行Uvicorn。
+
+“沿导入链加载database.py”在当前源码中有明确对应：api.py的from task_routes import task_router使Python加载task_routes.py，后者的from database import get_session使Python加载database.py。首次导入会执行模块最外层语句，因此先读取密码、创建URL/Engine/Session工厂；执行到def get_session只是定义函数，不调用其函数体。依赖被请求时才进入函数体，真实SQL需要连接时才访问数据库。模块通常在同一进程首次导入后缓存，不是每个HTTP请求重新执行整个database.py。
+
+完整执行顺序按职责理解如下（尚未配置就绪依赖时，并不保证两服务按此顺序完成启动）：
+
+1. Compose解析`${TASK_MANAGER_CONTAINER_DB_PASSWORD:?...}`；缺值报错，存在则填入两服务配置，不创建用户或建立数据库连接。
+2. db使用image: postgres:18创建容器，官方启动程序读取POSTGRES_USER、POSTGRES_DB、POSTGRES_PASSWORD，在空数据目录首次初始化用户名postgres、库task_manager_container及密码。volumes挂载将数据保存进命名卷；已有初始化数据时不按环境变量重复建库或改密码。业务表仍待Alembic迁移。
+3. api根据build描述取得应用镜像，创建容器时注入api.environment；Dockerfile CMD启动python -m uvicorn api:app，Uvicorn导入api.py。api.py中from task_routes import task_router沿依赖链加载database.py。
+4. database_password = os.environ['TASK_MANAGER_DB_PASSWORD']读取API自己的变量；URL.create中host的os.getenv得到db，database的os.getenv得到task_manager_container，username固定postgres、port固定5432，密码取前述变量。API不会主动读取另一个容器的POSTGRES_PASSWORD。
+5. URL.create整理连接参数，create_engine创建Engine，sessionmaker(bind=engine)创建Session工厂；这些步骤当前不直接发起数据库连接。db由同一Compose网络的服务名解析提供，不是Python特殊关键字。
+6. 需要数据库的HTTP请求到达FastAPI，Depends调用get_session，with SessionFactory() as session创建会话，yield提供给接口/Service/Repository。session.get、execute或flush等实际需要SQL的操作再取得连接；如果已有合适连接则可复用，不表示每次查询都新建物理连接。
+7. 数据库接收API提供的用户名/密码与目标库，执行SQL并返回结果。成功还要求数据库已就绪、认证配置一致、业务表迁移完成；API进程能启动不等于数据库请求一定成功。
+
+### 命名卷：容器内路径与实际数据存储
+
+命名卷由Docker管理具体存储位置，区别于用户指定Windows来源目录的绑定挂载。数据库服务中写volumes列表，并在Compose最外层登记卷，两处用途不同：顶层声明应用使用的卷，服务内指定哪个容器在什么路径访问它。
+
+```yaml
+services:
+  db:
+    volumes:
+      - postgres_data:/var/lib/postgresql
+
+volumes:
+  postgres_data:
+```
+
+以上仅示意卷相关配置，省略了真实文件中的镜像等其他项。左侧postgres_data是逻辑卷名，右侧/var/lib/postgresql是数据库容器内Linux目录，不是Windows文件路径。PostgreSQL 18官方镜像默认数据目录为/var/lib/postgresql/18/docker，位于挂载目录下，因此读写数据进入同一卷。旧版教程中的/var/lib/postgresql/data不能不分版本直接套用。Docker Desktop实际存储由其管理，用户不需要手动去容器路径对应的Windows目录编辑数据库文件。
+
+容器是使用存储的运行实例，挂载路径是访问入口，卷是持久存储。替换容器时关键是复用原来的同一实际卷并挂到正确位置，仅写相同容器路径不够；挂新空卷会得到新数据环境。Compose实际卷名默认带项目名前缀，所以换项目名或目录导致使用不同卷时，不能误认原数据被删。不是让两个PostgreSQL服务器同时读写同一数据目录。兼容版本下复用数据与跨大版本升级不同，后者仍需要数据库升级或迁移流程。卷不是备份，删除卷会丢失其中保存的数据，不能未经确认清理。
+
+2026-10-20卷配置文本验收通过：db内正确引用postgres_data:/var/lib/postgresql，顶层声明与services同级。尚未启动Compose、创建实际卷或验证数据库持久化；配置保存与真实资源创建应区分。
+
+### PostgreSQL健康检查：进程启动与可接收连接不同
+
+首次初始化数据库需要时间，容器进程已启动不代表PostgreSQL已接收连接，也不代表业务表存在。Compose中db.healthcheck描述由Docker在数据库容器内定期运行的检查：
+
+```yaml
+healthcheck:
+  test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "task_manager_container"]
+  interval: 5s
+  timeout: 3s
+  retries: 10
+  start_period: 10s
+```
+
+此处test的CMD是直接执行程序的检查类型，不是Dockerfile默认启动指令。pg_isready是官方PostgreSQL镜像内已有的工具，-h指定主机（省略时常用本地Unix套接字），-U指定用户，-d指定库。检查发生于db容器，因此127.0.0.1指db本身；API从另一容器连接仍使用服务名db。显式TCP地址也有助于避免把初始化阶段仅本地套接字上的临时服务误认为最终TCP服务就绪。
+
+pg_isready通过退出码传递结果：0接收连接，1拒绝连接（例如启动中），2无响应，3参数等问题导致未尝试连接。它不验证API密码认证成功，不检查Task Manager表，不替代Alembic迁移或API实际查询。
+
+interval为常规检查间隔5秒，timeout为单次检查超时3秒，连续失败10次标记unhealthy；start_period提供10秒启动失败宽限，宽限期内失败不计入该连续失败计数，成功可提前进入healthy。宽限期不是无条件等待十秒后才检查。健康状态和容器进程状态不同；标记unhealthy不由本配置自动重启数据库，也不自动创建业务表。
+
+2026-10-21已核对db.healthcheck字段及参数正确，导师在独立子进程提供虚构占位密码运行compose config --quiet，退出0。占位变量未写入文件或持久环境；此检查未创建容器或数据库，真实pg_isready运行结果仍待启动后验收。后续api使用depends_on的service_healthy条件消费该状态，再启动API。
+
+参考：[Compose启动顺序](https://docs.docker.com/compose/how-tos/startup-order/)、[pg_isready](https://www.postgresql.org/docs/18/app-pg-isready.html)。
+
+### depends_on：API等待数据库健康后启动
+
+api下添加depends_on，与build、ports、environment同级；db是依赖服务名称，condition: service_healthy要求Compose启动API前等数据库健康检查通过。
+
+```yaml
+depends_on:
+  db:
+    condition: service_healthy
+```
+
+配合db.healthcheck形成启动db→初始化并监听TCP→pg_isready成功→db为healthy→启动API→执行CMD/Uvicorn的流程。YAML服务书写先后顺序不替代该条件，普通进程启动状态也不等于健康。等待不自动执行Alembic、不验证API密码或任务表；数据库以后故障，不会由该配置自动暂停、重启API或持续保证连接可用。
+
+2026-10-21实际核对api.depends_on.db.condition正确，使用独立子进程虚构密码解析完整Compose，退出0。此验证只解析配置，不创建实际资源，也不证明独立数据库已初始化。下一步先用真实运行时变量启动db，再查看健康状态，暂不启动API。
+
+### 首次启动独立数据库：运行时密码与等待健康
+
+在同一PowerShell终端中准备运行时密码：
+
+```powershell
+$containerPassword = Read-Host "请输入独立容器数据库密码" -AsSecureString
+$env:TASK_MANAGER_CONTAINER_DB_PASSWORD = [System.Net.NetworkCredential]::new("", $containerPassword).Password
+```
+
+第一行等待用户输入，-AsSecureString让输入不以明文显示，返回SecureString对象，保存到PowerShell普通变量$containerPassword。第二行从右向左理解：创建临时凭据对象→读取密码字符串→赋给环境变量。
+
+| 语句部分 | 含义、输入与结果 |
+| --- | --- |
+| `[System.Net.NetworkCredential]` | 引用.NET提供的凭据类；PowerShell可使用.NET类型，不是项目自己定义的类 |
+| `::new("", $containerPassword)` | 调用构造函数创建对象，类似Python的类名(...)；第一个参数为用户名，这里用空字符串，第二个参数为之前得到的SecureString密码 |
+| `.Password` | 读取凭据对象的属性，不是方法，因此没有调用括号；返回普通.NET String，包含密码明文内容 |
+| `$env:TASK_MANAGER_CONTAINER_DB_PASSWORD` | 访问当前PowerShell进程的同名环境变量；$env:是语法前缀，后面是变量名 |
+| `=` | 将右侧计算出的字符串赋给左侧环境变量；赋值本身不会将密码打印到终端 |
+
+使用NetworkCredential只是借助临时对象取得普通字符串，不会连接网络、登录数据库、验证密码或修改数据库密码。环境变量需要字符串，不能把SecureString对象本身当作实际密码直接传递。为理解可将原语句展开如下，无需重复执行或打印中间变量：
+
+```powershell
+$credential = [System.Net.NetworkCredential]::new("", $containerPassword)
+$passwordText = $credential.Password
+$env:TASK_MANAGER_CONTAINER_DB_PASSWORD = $passwordText
+```
+
+完整数据流：用户输入→SecureString普通变量→临时凭据对象→Password属性返回普通字符串→当前进程环境变量→之后启动的Docker Compose子进程继承→Compose用`${TASK_MANAGER_CONTAINER_DB_PASSWORD:?...}`填入配置→传给db容器成为POSTGRES_PASSWORD（另一路传给api成为TASK_MANAGER_DB_PASSWORD）。数据库首次初始化时才读取POSTGRES_PASSWORD实际设置数据库用户密码，设置PowerShell变量不等于已经设置数据库密码。
+
+普通变量$containerPassword供PowerShell使用，不会像环境变量那样自动交给子进程；$env:设置仅影响当前进程及随后启动的子进程，不自动传播到另一个已打开终端，也不是永久用户级环境变量设置。实际密码不写入命令文本、Compose或.env；但取得.Password后密码已是普通字符串，进程环境和容器配置不是加密秘密存储。输入隐藏不等于全程加密，不能打印中间密码变量或发送给他人。字符串对象或SecureString的生命周期与环境变量有效范围也应分开理解；丢弃一个变量名不保证所有密码副本都立即从内存消失。
+
+在项目根目录执行docker compose up -d --wait --wait-timeout 120 db：up按配置创建/更新并启动指定服务，-d后台运行，--wait等待运行/健康状态，--wait-timeout限制等待秒数，末尾db只选择数据库服务，不启动API。首次可能下载postgres:18、创建项目默认网络与命名卷、初始化独立数据库；不修改没有挂载给它的本机原库。超时不保证容器自动停止或删除，应检查真实状态。docker compose ps查看当前项目服务及健康状态；db未发布宿主端口，PORTS没有宿主映射属于正常设计，后续API通过内部网络连接。
+
+配置正确、使用者反馈已执行、助手实际核验是不同证据。2026-10-21用户反馈完成，但导师检查当前Docker容器列表及compose ls未发现Compose项目或PostgreSQL容器，compose exec返回db未运行；因此不能记为初始化通过，需核对终端启动输出后再推进迁移，不能直接把“已完成”当成数据库真实存在。
+
+### 同一API镜像运行迁移：覆盖默认CMD
+
+`docker compose build api`根据api.build准备服务镜像，不启动API。Compose默认镜像名称不同于手工task-manager-api:v1，但可以复用同一Dockerfile的构建缓存。迁移命令为：
+
+```powershell
+docker compose run --no-deps --name task-manager-migrate-v1 api python -m alembic upgrade head
+```
+
+语法边界为compose run [选项] 服务名 [本次命令及参数]。--no-deps不额外启动依赖，要求db已运行；--name指定一次性任务容器名，退出后仍占用该名称。api选择服务配置，之后的python -m alembic upgrade head是本次启动命令，不是传给已运行HTTP接口的请求。run创建新任务容器，使用服务镜像、网络与environment，默认不发布该服务ports；它不是在已有API容器里执行命令。
+
+当前镜像用CMD登记Uvicorn默认启动命令；compose.yaml没有额外command或entrypoint。本次run在服务名后明确提供命令，替代该新容器的默认CMD，不修改Dockerfile、镜像或其他容器。若未提供新命令，当前配置会用原CMD。镜像同时包含Uvicorn、Alembic及源码/迁移文件，因此可选择启动HTTP服务或执行迁移后结束。后续有ENTRYPOINT时，组合规则需另行解释，不能把此例无条件推广。
+
+执行链为Compose插值并注入API数据库变量→任务容器运行Alembic→读取alembic.ini与env.py→database.py生成指向db/task_manager_container的URL→连接独立数据库→执行已有两版upgrade→提交迁移并退出。此处实际修改目标库结构，不启动Uvicorn。迁移容器退出0本身应结合数据库事实确认，不仅凭保存配置或镜像存在判定通过。
+
+2026-10-21导师实际核验task-manager-migrate-v1状态exited、退出码0、Config.Cmd为Alembic命令，日志执行042f491f9a4a和f959d63045e7；只读查询确认当前库task_manager_container、版本f959d63045e7，public有alembic_version/tags/task_tags/tasks，tasks有created_at字段。未访问或修改本机原库；API HTTP服务和业务请求仍待验证。
+
+### Compose启动API与查看项目容器
+
+`docker compose up -d api`按服务配置创建或启动API，未提供覆盖命令时使用镜像CMD运行Uvicorn，数据库健康条件通过后启动。不等同于compose run临时迁移任务。首次创建/配置变化与单纯启动的行为由Compose根据现有资源判断，不能认为每次up必然新建所有容器。
+
+`docker compose ps`列当前Compose项目的运行服务容器，不启动或停止服务；ps -a包含停止的项目容器。docker container ls则列当前Docker环境的运行容器，可能同时出现其他项目及Nginx教学容器。SERVICE对应YAML逻辑服务名，NAME是实际容器名，STATUS的Up表示运行，healthy表示健康检查通过，PORTS显示发布关系。db显示5432/tcp不代表该端口已发布至Windows；api的127.0.0.1:8000->8000/tcp明确表示本机映射。
+
+验收应分层：API容器Up→HTTP文档可访问→真实数据库查询成功。/docs展示文档不能独自证明数据库连接成功；GET /tasks实际执行查询，空库应返回[]。compose logs --tail 30 api读取API末尾30行标准输出/错误，不重新启动服务。
+
+2026-10-21用户反馈命令及页面符合预期，导师只读核实api运行、db healthy，GET /openapi.json返回200且标题Task Manager 4.0，GET /tasks返回200和空列表。容器网络、认证及迁移后列表查询链已通过；尚未验收容器化创建写入、容器重建后的卷数据保留或Windows重启恢复，未导入历史JSON。
+
+### Compose build与up：首次部署、恢复和更新分别处理
+
+`docker compose build api`读取api.build及Dockerfile，准备基础环境、安装依赖、复制源码并保存默认启动命令，生成镜像但不启动API、不执行Uvicorn，也不等待数据库健康。已运行的API容器不会因构建完成就自动更新。
+
+`docker compose up -d --wait --wait-timeout 120 api`组织运行环境，按depends_on启动或等待数据库，通过后创建/启动API，注入运行环境并执行默认CMD。已有配置或镜像变化时可能重建容器，不是无条件复用；镜像不存在时可能触发构建，但不能因源码改了就假定普通up一定重建镜像。--wait对当前API只等待运行状态，仍需查询接口验证。
+
+| 场景 | 操作选择与判断 |
+| --- | --- |
+| 首次空环境 | 准备密码、启动db、build api、run执行Alembic、up api、ps及HTTP验收 |
+| 普通恢复 | 镜像/配置/源码未变且卷保留时，准备同一密码后up整套服务，不机械重建或迁移 |
+| 更新Python业务代码 | build api，再up api使服务使用新镜像；出现容器替换时遵循操作授权 |
+| 新增表结构迁移 | 需让迁移任务使用包含新脚本的镜像，并在确认目标后执行迁移，不仅更新HTTP容器 |
+
+显式合并构建与启动可写`docker compose up -d --build --wait --wait-timeout 120 api`，--build要求启动前构建，仍可复用构建缓存。这是更新流程，不是当前普通恢复练习必须执行的命令；不自动运行Alembic。首次安装README里的完整命令组不能当成每次恢复都要重做的清单。
+
+### 新终端恢复：配置、镜像、迁移与服务范围分别判断
+
+新终端不继承另一个已打开终端中临时设置的环境变量，因此需重新提供原有TASK_MANAGER_CONTAINER_DB_PASSWORD，必要时准备Docker命令PATH，并进入项目根目录。Read-Host输入的是已有容器数据库密码，不是借重新启动设置新密码。变量赋值应以$containerPassword开始，不在前面添加image等无关文字。config --quiet只校验配置，不启动服务。
+
+用户实际新终端练习中遇到两处已解释的问题：docker无法识别时尚未执行到Compose，应先将D:\Docker\resources\bin加入当前终端PATH，无需重复输入已在该终端设置的密码；bad flag syntax: ---quiet是三个短横线，应为两个短横线的--quiet。前者是命令查找问题，后者是参数解析问题，均不能直接归因为数据库密码或连接故障。此轮PATH步骤使用了导师提示，不记为无提示独立完成。
+
+`docker compose up -d --wait --wait-timeout 120 db`只选择数据库服务，不会因为API依赖db就反向启动API；省略末尾服务名则恢复当前配置中的整套默认服务。应区分“依赖先满足”与“启动依赖后自动启动所有使用者”。
+
+恢复时分别判断：源码/依赖/Dockerfile未变化且本地镜像仍在，无需重建镜像；原数据卷仍在、迁移已应用且没有新增迁移，无需为普通停启再次迁移。两项依据不同，不以一句“之前成功过”替代状态检查。配置、密码、镜像或数据卷丢失时需按实际问题处理，不能只重复启动命令。
+
+验收分两层：compose ps确认API Up与db healthy；GET /tasks/1确认原任务可实际读回。路由是复数/tasks，不是/task，查询ID应来自已创建记录，不能假设每个新环境都有ID=1。当前练习用已确认存在的任务1。用户首次口述理解了密码准备和已有镜像复用，但遗漏API启动，路由写成单数且密码赋值多写image；导师已指出并解释。此为有提示口述练习，尚未证明新终端独立恢复通过，也不是Windows重启验收。
+
+恢复练习最终输出显示用户重复执行首次启动清单：build api中依赖层CACHED、COPY . .重新执行，生成新API镜像，随后up采用新镜像替换API容器。文档等非业务文件也在当前COPY范围内，因此业务代码未变不保证镜像内容未变。再次upgrade head仅有环境日志、没有Running upgrade，与数据库已在head一致；并非重新创建已有表。实际任务1与同一数据库卷保留，恢复结果通过，但流程选择存在冗余，记录为有提示练习，不要求立即重新停启。Found orphan containers涉及保留的一次性迁移容器，不等于业务服务失败；不要只为去掉警告就执行remove-orphans，删除仍须确认。
+
+### 停启与替换容器的持久化验收
+
+docker compose stop正常停止项目服务而不删除容器、网络或卷；随后up -d --wait --wait-timeout 120恢复当前默认服务。未指定服务名时处理整套默认服务；up可创建或按变化重建，不总等同start。--wait隐含后台运行，-d可显式表达同一意图。db有健康检查须到healthy，api当前没有健康检查只等运行状态；120限制等待阶段，不限制服务运行时长，不保证涵盖所有下载/构建耗时。超时不会保证回滚或停止已经运行的容器。用户已反馈停启后/tasks/1保留，不能仅凭此证明容器被替换后仍持久保存。
+
+2026-10-21用户明确授权删除旧数据库容器并保留原卷进行重建。导师先停止API，使用pg_dump -Fc备份独立容器库到D:\DockerData\backups（备份命令成功且文件具有PGDMP头，未做恢复演练）；再执行compose up -d --no-deps --force-recreate --wait --wait-timeout 120 db，强制替换指定服务容器但不删除命名卷。此命令包含旧容器删除，不作为未经确认可执行的普通只读命令。
+
+实际旧db容器ID d57023a294ca，新ID 66e013a3e621，挂载实际卷均为task_managers_2_postgres_data，db healthy。随后compose start api恢复已有API容器，GET /tasks/1返回200及原任务、high、false和docker/persistence标签；SQL确认库名task_manager_container、迁移版本f959d63045e7、任务数1。没有重新初始化业务数据或再次迁移，证明本轮同一PostgreSQL主版本下换容器并复用原卷保留了数据。未删除卷、未执行down -v、未触及本机原库；跨版本升级、机器重装和备份恢复能力仍不能由本实验推出。
+
+### 日志与停止、恢复服务
+
+`docker container logs --tail 10 web-demo`读取标准输出/标准错误日志末尾10行，不重新执行程序；未指定--tail时默认读取全部已有日志，默认不持续跟踪。当前官方Nginx镜像将访问日志输出到这里，可观察GET / HTTP/1.1及状态码；200为成功，304表示缓存验证后可继续使用缓存，不是故障。日志还可能包含初始化信息、图标请求，不保证每次刷新只有一行。
+
+`docker container stop web-demo`请求主程序正常结束，超过等待期限才强制终止，不删除镜像或容器。浏览器已显示的页面不会随之消失，要重新请求（例如Ctrl+F5）观察服务不可用。`docker container start web-demo`重新运行原容器，原端口映射保留，无需重复指定-p，新请求恢复。用户已反馈日志、停止后不可连接、启动后网页恢复均符合预期；本轮助手没有重跑实验。
+
+参考：[Docker概览](https://docs.docker.com/get-started/docker-overview/)、[容器](https://docs.docker.com/get-started/docker-concepts/the-basics/what-is-a-container/)、[Compose](https://docs.docker.com/get-started/docker-concepts/the-basics/what-is-docker-compose/)、[数据卷](https://docs.docker.com/engine/storage/volumes/)、[Windows安装](https://docs.docker.com/desktop/setup/install/windows-install/)、[运行容器](https://docs.docker.com/reference/cli/docker/container/run/)、[官方中文界面需求](https://github.com/docker/roadmap/issues/543)。
 
 ## pytest共享fixture：`conftest.py`
 

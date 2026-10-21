@@ -1,0 +1,37 @@
+services:
+
+  db:
+    image: postgres:18
+
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: task_manager_container
+      POSTGRES_PASSWORD: ${TASK_MANAGER_CONTAINER_DB_PASSWORD:?请先设置容器数据库密码}
+
+    volumes:
+      - postgres_data:/var/lib/postgresql
+
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "task_manager_container"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  api:
+    build: .
+
+    ports:
+      - "127.0.0.1:8000:8000"
+
+    environment:
+      TASK_MANAGER_DB_HOST: db
+      TASK_MANAGER_DB_NAME: task_manager_container
+      TASK_MANAGER_DB_PASSWORD: ${TASK_MANAGER_CONTAINER_DB_PASSWORD:?请先设置容器数据库密码}
+
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

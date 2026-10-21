@@ -61,6 +61,9 @@ Task_Managers_2/
 ├── legacy_import.py  # 旧JSON校验与一次性事务导入入口
 ├── alembic.ini       # Alembic 配置
 ├── alembic/          # 迁移环境及版本脚本
+├── Dockerfile        # API 镜像构建步骤
+├── .dockerignore     # 构建上下文排除规则
+├── compose.yaml      # API、独立 PostgreSQL、健康检查与持久卷
 ├── client_demo.py    # 使用 requests 调用 API 的客户端示例
 ├── main.py           # Task Manager 2.0 命令行入口
 ├── models.py         # 内部 Task 数据模型
@@ -69,6 +72,7 @@ Task_Managers_2/
 ├── utils.py          # 日志配置、输入工具和日志装饰器
 ├── database_api_demo.py # 数据库 API 教学演示入口
 ├── examples/database/ # 数据库教学脚本：psycopg/与sqlalchemy/
+├── examples/docker/  # Nginx 页面与镜像构建教学示例
 ├── tests/            # pytest自动化测试
 ├── data/             # 任务数据目录
 ├── logs/             # 日志目录
@@ -112,7 +116,7 @@ python -m pip install -r requirements.txt
 
 ## 运行 Web API
 
-正式 API 默认连接本机 PostgreSQL 的 `task_manager_learning` 数据库，用户为postgres、端口5432。启动前先在当前 PowerShell 会话设置数据库密码和目标数据库名：
+以下是本机 Python 开发运行方式；使用容器请见后面的“使用 Docker Compose 运行”。正式 API 默认连接本机 PostgreSQL 的 `task_manager_learning` 数据库，用户为postgres、端口5432。启动前先在当前 PowerShell 会话设置数据库密码和目标数据库名：
 
 ```powershell
 $env:TASK_MANAGER_DB_PASSWORD = "你的数据库密码"
@@ -121,7 +125,7 @@ $env:TASK_MANAGER_DB_NAME = "task_manager_learning"
 
 该变量只对当前 PowerShell 会话及其启动的子进程有效。不要把真实密码写入源码或提交到 Git。
 
-数据库名变量未设置时默认为task_manager_learning；API、测试与Alembic均使用此配置。目标数据库需要预先创建，首次运行请先按下节完成结构初始化。确认目标库后，在项目根目录执行：
+数据库名变量未设置时默认为task_manager_learning；主机由TASK_MANAGER_DB_HOST指定，未设置时默认localhost。本机开发请确认该变量没有残留为容器服务名db。API、测试与Alembic均使用此配置。目标数据库需要预先创建，首次运行请先按下节完成结构初始化。确认目标库后，在项目根目录执行：
 
 ```powershell
 python -m uvicorn api:app --reload
@@ -156,6 +160,74 @@ python -m alembic check
 后续修改模型后，可运行`python -m alembic revision --autogenerate -m "变更说明"`生成迁移，人工审查后先在专用测试库验证，再应用到实际使用库。生成文件不等于已经升级，历史已应用迁移不回写。`upgrade head --sql`只生成SQL文本。
 
 回退命令会执行对应downgrade，可能删除列、表及其数据；日常运行不需要回退。本项目的回退验证在task_manager_migration_test中进行，原库仅升级。created_at使用带时区时间戳和CURRENT_TIMESTAMP默认值；旧记录补迁移事务时间，不能据此恢复真实历史创建时间。当前API响应尚未增加该字段。
+
+## 使用 Docker Compose 运行
+
+需要已启动的 Docker Engine（Linux 容器）和 Docker Compose，下载镜像及安装依赖需要网络。本节命令在项目根目录的同一 PowerShell 终端执行；容器方式不要求先安装本机 Python 依赖或本机 PostgreSQL。Windows 上安装 Docker 后，如果旧 IDE 终端无法找到 docker，请重开终端；本机安装在 D:\Docker 时也可临时将 D:\Docker\resources\bin 加入当前终端 PATH，凭据助手同样需要此路径。
+
+配置提供两个独立服务：api根据根目录Dockerfile构建，db使用postgres:18。API连接db:5432/task_manager_container，不使用本机task_manager_learning。数据库端口未发布至Windows；API只发布127.0.0.1:8000，启动前确认没有本机开发服务器占用该端口。本节不会自动导入旧JSON。
+
+### 首次启动空数据库
+
+先交互输入独立容器数据库密码，不在配置文件中填写实际密码：
+
+```powershell
+$containerPassword = Read-Host "请输入独立容器数据库密码" -AsSecureString
+$env:TASK_MANAGER_CONTAINER_DB_PASSWORD = [System.Net.NetworkCredential]::new("", $containerPassword).Password
+docker compose config --quiet
+```
+
+变量仅在当前终端及子进程中有效，新终端需要重新提供；容器环境变量最终是普通字符串，不是秘密管理系统。不要打印完整环境或把实际密码放入截图。普通docker compose config可能展开密码，因此此处使用--quiet。PostgreSQL初始化完成后须继续提供同一个密码；修改外部变量不会自动修改已有数据库密码。请自行妥善保存密码。
+
+依次执行，每一步成功后再继续：
+
+```powershell
+docker compose up -d --wait --wait-timeout 120 db
+docker compose build api
+docker compose run --no-deps api python -m alembic upgrade head
+docker compose up -d --wait --wait-timeout 120 api
+docker compose ps
+```
+
+第一个命令创建或复用项目网络、命名卷并等待数据库健康；官方镜像只在空数据目录初始化用户postgres和库task_manager_container。Alembic任务使用api的网络和环境变量，以迁移命令覆盖默认Uvicorn CMD，真实创建/升级业务表。这里不指定固定任务容器名，便于以后再次执行迁移；退出的任务容器会保留，可用ps -a查看，清理另行确认。构建不执行迁移，API启动也不自动迁移；先迁移成功再启动API。
+
+访问以下地址验证：
+
+- http://127.0.0.1:8000/docs：接口文档，标题Task Manager 4.0。
+- http://127.0.0.1:8000/tasks：真实数据库查询；新空库返回[]，已有数据时返回任务列表。
+
+db的healthy仅表示pg_isready成功，不证明API密码正确或业务表存在；API当前无健康检查，up --wait等待运行状态，仍需实际HTTP查询。120秒是等待超时，不是服务寿命；超时不保证自动停止已经启动的资源。
+
+### 后续停止、恢复和查看日志
+
+```powershell
+docker compose ps
+docker compose ps -a
+docker compose logs --tail 30 api
+docker compose logs --tail 30 db
+```
+
+ps查看当前项目运行服务，ps -a包含停止及一次性任务容器。停止整套服务并保留容器、网络及卷：
+
+```powershell
+docker compose stop
+```
+
+在提供相同容器数据库密码后恢复默认服务：
+
+```powershell
+docker compose up -d --wait --wait-timeout 120
+```
+
+数据未清空且迁移脚本未更新时，不需为了普通停启重复初始化或创建验收任务。源码更新需要重新构建镜像，并由Compose更新API容器；已有容器不会自动读取本机源码。生产发布、容器替换和删除等操作应按实际授权及备份流程另行执行。
+
+### 数据保存与已验证范围
+
+命名卷postgres_data挂载到PostgreSQL 18容器的/var/lib/postgresql，实际卷名默认带Compose项目名前缀。复用同一实际卷并使用兼容数据库版本可保留数据；换项目名可能使用另一卷，仅复用相同容器内路径不够。删除卷会删除这份数据库存储，不要未经确认执行带卷删除的清理；卷也不代替备份。跨PostgreSQL大版本升级需要独立升级流程。
+
+已验证镜像构建、空库迁移、API查询和创建、服务停启，以及替换数据库容器后复用原卷读回任务。未验证Windows重启后的完整恢复、数据库备份恢复演练、生产部署或全套测试在容器中运行。源码构建时顶层依赖固定版本，但传递依赖尚未完整锁定。
+
+构建拉取失败应先区分Docker Hub与PyPI连接；曾出现间歇性TLS中断并在原样重试后成功。索引获取失败后的No matching distribution不独自证明包版本不存在，不据此直接关闭证书校验或改版本。需要时先保留失败步骤和前面的网络错误。
 
 ## 旧JSON一次性导入
 
@@ -403,6 +475,6 @@ ID 表示任务身份，不是任务在 Python 列表中的位置。
 
 ## 后续规划与学习记录
 
-PostgreSQL、SQLAlchemy ORM、Alembic结构迁移、旧JSON一次性导入及事务隔离自动化测试已经接入。阶段四后续将推进Docker运行配置和独立重建验收；真实历史文件导入需另行确认执行目标。
+PostgreSQL、SQLAlchemy ORM、Alembic结构迁移、旧JSON一次性导入及事务隔离自动化测试已经接入。Docker Compose已验证独立数据库初始化、迁移、API读写及同卷重建持久化；阶段四仍需独立复现与交付收束。真实历史文件导入需另行确认执行目标。
 
 已完成阶段、知识点大纲、验收记录及当前学习进度统一记录在 [PROGRESS.md](PROGRESS.md)。导师教学方式与操作约束见 [AGENTS.md](AGENTS.md)。本文件继续作为项目功能、接口与运行方式的说明。

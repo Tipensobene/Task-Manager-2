@@ -12,7 +12,7 @@ database_url=URL.create(
     drivername="postgresql+psycopg",
     username="postgres",
     password=database_password,
-    host="localhost",
+    host=os.getenv("TASK_MANAGER_DB_HOST","localhost"),
     port=5432,
     database=os.getenv(
         "TASK_MANAGER_DB_NAME",

@@ -1138,7 +1138,11 @@ $env:TASK_MANAGER_CONTAINER_DB_PASSWORD = $passwordText
 
 ### 同一API镜像运行迁移：覆盖默认CMD
 
-`docker compose build api`根据api.build准备服务镜像，不启动API。Compose默认镜像名称不同于手工task-manager-api:v1，但可以复用同一Dockerfile的构建缓存。迁移命令为：
+`docker compose build api`根据api.build准备服务镜像，不启动API。Compose默认镜像名称不同于手工task-manager-api:v1，但可以复用同一Dockerfile的构建缓存。
+
+2026-10-22镜像选择补充：run/up中的api是Compose服务名，不是对镜像名称进行模糊搜索。当前未设置image，Compose按项目名和服务名确定task_managers_2-api:latest；构建日志naming to该名称确认本次标签。重新build成功后，同一标签指向新构建结果，旧镜像或旧容器可能仍保留。latest只是标签，不会扫描并挑选所有API镜像中时间最新的一个。若显式配置image: task-manager-api:v2，则按该镜像引用选择；build时也可使用该名称标记结果。构建更新标签不改变已运行容器，仍需up使API使用新镜像。
+
+迁移命令为：
 
 ```powershell
 docker compose run --no-deps --name task-manager-migrate-v1 api python -m alembic upgrade head

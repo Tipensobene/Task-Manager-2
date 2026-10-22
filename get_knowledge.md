@@ -470,6 +470,42 @@ sa.Column("id", sa.Integer(), sa.Identity(always=True), primary_key=True)
 
 ### 迁移中的默认值：`default`与`server_default`
 
+2026-10-21接口增量：调用方法时位置参数按形参顺序绑定，description作为第四个显式参数时可写task.description，也可写description=task.description明确指定；self由实例方法调用自动绑定。TaskResponse的from_attributes=True允许读取ORM属性；tags的before校验器先将TagRecord对象转换为name字符串，再按list[str]校验，description本身是字符串则无需额外转换。
+
+PATCH备注必须区分省略、空串、null：TaskUpdate使用str|None且default=None，路由model_dump(exclude_unset=True)排除未提供字段；{}保留原备注，显式空串清空，显式null仍留在字典并由Service拒绝。当前null经Service返回400，数字或超长文本由请求模型返回422。Service仍需独立类型校验，以支持非HTTP调用；测试必须既检查接口行为，也直接调用Service，避免Pydantic掩盖业务层遗漏。
+
+备注隔离测试使用内存SQLite验证接口与Service协作，不替代PostgreSQL迁移验收；Mock替代Repository检查非法输入不调用保存。tests/test_task_description.py通过get_session依赖替换让真实路由使用内存Session，结束后恢复依赖并释放引擎。该套件不覆盖PostgreSQL专有特性或完整历史回归。
+
+#### 备注测试的执行链与连接生命周期（2026-10-22）
+
+description_client是默认function作用域的fixture，每个参数化用例都重新创建Engine、内存库和TestClient。create_all按当前Base.metadata建表，不执行Alembic。内部override_session只是先定义函数；app.dependency_overrides[get_session] = override_session登记替换规则，请求到来后FastAPI才调用它，每次请求在with Session(engine)中创建会话并通过yield提供给真实路由。fixture的yield client则由pytest接收，绑定到测试函数的description_client参数；两处yield的管理者不同。TestClient直接调用应用，无需启动Uvicorn或占用8000端口。finally先恢复此前copy保存的依赖字典，再dispose引擎；即使断言失败也执行清理。
+
+普通SQLite内存数据库通常跟底层连接关联：连接A建表，连接B可能访问另一个没有表的内存库。StaticPool通常只维护一个底层连接，使本用例的建表、POST、GET等操作共享数据；不同请求仍有不同Session。check_same_thread=False只是允许SQLite连接跨线程使用，不会让所有操作自动选择同一连接，也不保证任意并发安全。TestClient可能涉及不同线程，所以两项配置配合使用。本测试按顺序请求；每个用例有独立引擎，因此用例之间不共享数据。连接池释放或连接失效后连接可能重建，StaticPool不表示永久保持同一连接。
+
+engine.dispose(close=True)针对当前Engine的连接池，不处理其他Engine；对常见池会关闭已归还的空闲连接并替换池，不强制关闭仍被借出的连接，使用者仍需关闭它们。StaticPool本例在请求Session结束后释放其连接资源。dispose不使Engine永久失效，后续仍可建新连接，但内存数据库内容不能指望保留。Session.close管理当前会话资源，Connection.close在常见池化场景中归还连接，不能与Engine.dispose混为一谈。
+
+接口测试先POST准备数据，检查创建响应，再GET详情/列表确认数据库读取结果；PATCH测试先创建original，再修改并重新查询，区分省略保留与空白清空。json={"title": "test", **fields}用字典展开组合请求，f"/tasks/{task['id']}"用返回ID构造路径。参数化数量为4+3+5+3+2×3，共21例，不是21个函数。用例验证非法单字段修改不破坏备注，不代表已覆盖多字段更新中途失败的所有回滚场景。
+
+参考：[StaticPool](https://docs.sqlalchemy.org/en/21/core/pooling.html#sqlalchemy.pool.StaticPool)、[跨线程SQLite内存库](https://docs.sqlalchemy.org/en/21/dialects/sqlite.html#using-a-memory-database-in-multiple-threads)、[Engine释放](https://docs.sqlalchemy.org/en/21/core/connections.html#engine-disposal)。
+
+#### Mock为何能够代替Repository（2026-10-22）
+
+Mock()是构造Mock类实例，repository只是变量名，不会推断或转换成TaskRepository。普通Mock访问尚不存在的普通属性时可生成子Mock；repository.get_by_id.return_value = task配置该模拟方法调用时返回task，不查询数据库。TaskService构造参数的类型注解不自动强制运行时类型检查，因此可接收能响应所需调用的模拟对象。assert_not_called()检查对应模拟方法从未被调用。Mock(spec=TaskRepository)可限制按参照对象允许的属性，但仍是模拟对象，不执行真实Repository逻辑。
+
+直接Service测试不请求description_client，因此不创建内存库；TaskRecord仅是未保存的对象。Mock返回该对象，真实Service对非法值抛ValueError，随后检查对象未修改、add_task及标签查询未调用。创建分支中的原对象未被使用，故对象不变断言的主要意义在更新分支；更新本来不调用add_task，不能单凭未调用add_task证明更新安全。参考：[Python Mock文档](https://docs.python.org/3/library/unittest.mock.html#the-mock-class)。
+
+2026-10-21备注实现补充：在SELECT中，`description = '' AS description_is_empty`先比较该行备注是否等于空字符串，再用AS为结果列起别名；不是赋值，也不新增或保存字段。空串得到true，非空文本或纯空格得到false，NULL比较得到NULL；检查NULL应使用IS NULL。
+
+Service按“类型校验→strip→清理后长度校验→构造对象→数据库操作”的顺序处理备注。isinstance(description, str)返回是否为字符串，必须先于strip，避免None引发AttributeError；长度在strip后检查，符合清理后最多500字符的规则。普通TaskRecord(...)仅创建内存对象，不立即INSERT；只要依赖值已就绪，提前构造通常能运行，但放在输入校验之后更清楚，也避免创建随后被弃用的对象。非法输入在标签查询和保存之前失败，可减少不必要的数据库操作。
+
+2026-10-21补充：固定文本默认值可直接传普通字符串，如`server_default=""`、`server_default="normal"`或`server_default="暂无备注"`，SQLAlchemy会处理SQL字符串字面量的引用。使用`text(...)`时，内容是SQL表达式：`text("''")`表示SQL空字符串，`text("")`没有有效表达式，不能表示空字符串。`server_default=text("CURRENT_TIMESTAMP")`表示由数据库计算当前时间；普通字符串`"CURRENT_TIMESTAMP"`表达的是固定文本，不能替代时间计算。
+
+例如备注列同时声明`default=""`和`server_default=""`：前者由SQLAlchemy组织插入时使用，后者描述数据库的DEFAULT规则。迁移为已有表增加`nullable=False`且数据库默认值为空字符串的新列时，旧记录在新增列上的值可得到空字符串，其他字段保留；仅修改模型不会改变数据库。默认值主要处理INSERT省略该列的情况，不是通用的输入清洗规则：主动传空字符串不会自动换成其他默认文本，显式SQL NULL也不会自动触发DEFAULT；ORM对象中的None是否被省略需结合映射和实际INSERT判断。因此接口仍需明确拒绝null、去除首尾空白，并在规范化后检查长度。
+
+备注需求的调用链是：请求JSON→TaskCreate校验→路由传参→TaskService规范化并构造TaskRecord→数据库保存→TaskResponse从对象属性读取→响应JSON。列表查询完整TaskRecord时，新增普通列会随对象加载；仅为了返回备注，无需给Repository.list_tasks增加备注过滤形参。models.py和service.py属于旧CLI/JSON链路，本轮正式API需求不涉及它们。
+
+学习笔记后续按AGENTS.md“文档维护与交接”中的主动归档规范维护：每推进4～5轮检查增量知识并合并，用户明确要求时即时整理。
+
 `default`由SQLAlchemy在组织插入时使用，不会在建表SQL中生成数据库DEFAULT规则。当前普通ORM模型的default通常在执行插入时生效，不代表刚构造Python对象就已赋值。`server_default`是Column的关键字参数，默认None；它描述数据库端默认值，在建表时写入表结构。因此从pgAdmin或其他客户端插入并省略该列，也能使用数据库默认值。
 
 本项目迁移的done列需要`server_default=sa.text("false")`，priority列需要`server_default=sa.text("'normal'")`，分别描述SQL中的`DEFAULT false`和`DEFAULT 'normal'`。`sa.text()`接收SQL文本，返回TextClause描述对象，本身不执行SQL；这里由建表操作将描述写入DDL。外层双引号属于Python字符串语法，内层单引号表示SQL字符串字面量；SQL布尔值false不需单引号。
@@ -634,6 +670,22 @@ set是Python内置集合类型，set(iterable)构造不含重复元素的集合�
 enumerate(source_ids, start=0)是Python内置函数，返回迭代器，每次产生(位置编号, 元素值)，不修改原列表。测试中对[3,8,3]产生(0,3)、(1,8)、(2,3)，分别用值作旧ID、编号生成不同标题；相邻与非相邻重复ID测试据此只针对ID冲突。
 
 ### argparse命令行参数入口
+
+#### PowerShell启动Python工具：按执行层次读命令（2026-10-21）
+
+终端是输入和显示文字的窗口，PowerShell是解析命令并启动程序的Shell。命令通常由程序与参数组成，参数的含义由接收它的程序决定。例如：
+
+```powershell
+& "D:\Python\Project\.venv\Scripts\python.exe" -m alembic revision --autogenerate -m "add task description"
+```
+
+PowerShell的`&`是调用运算符，将引号中的路径作为命令执行；引号保证含空格的路径或说明文字作为一个整体，不能把程序路径和所有参数包成一个字符串。完整路径明确选择项目虚拟环境的Python；仅写python时需要Shell查找命令。Python的第一个`-m`表示运行模块alembic，Alembic接收后面的revision、--autogenerate及第二个`-m`；后者是--message的简写，填写迁移说明。参数不能脱离所属程序解释。
+
+完整Python路径不改变当前工作目录。`cd D:\Python\Project\Task_Managers_2`切换目录，使Alembic按默认方式找到项目alembic.ini。执行顺序为PowerShell启动Python→Python运行Alembic→读取项目配置和env.py→连接数据库并比较真实结构与Base.metadata→在versions目录生成候选脚本。revision --autogenerate会读数据库、写脚本，但不执行候选结构变更；upgrade head才执行迁移。
+
+`PATH`帮助Shell查找python.exe、docker.exe等可执行程序；`sys.path`是Python查找模块或包的搜索位置列表。`python -m`方式下通常包含当前目录、标准库目录和当前虚拟环境的Lib/site-packages等。安装在本项目虚拟环境的Alembic通常位于`D:\Python\Project\.venv\Lib\site-packages\alembic`；Python找到包后运行其`__main__.py`，由该入口解析current或revision等参数。找不到时会报告No module named alembic；另一个Python安装过此包不代表当前环境可以使用。
+
+项目自身的alembic目录保存env.py和versions迁移脚本，与site-packages中的工具包职责不同。当前项目目录无__init__.py，按通常的导入规则不会因此阻止后续找到已安装的普通包；在项目中创建同名alembic.py则可能遮蔽真正的工具包。上述是常见文件系统导入流程，Python还支持其他导入机制，当前阶段无需展开。
 
 argparse是Python标准库，用于把启动命令中的参数解析成Python属性。流程为启动命令→ArgumentParser→add_argument登记规则→parse_args读取参数→args.file_path取得路径；本阶段main仅打印路径，不执行导入。ArgumentParser(description=...)创建解析器，description默认None，add_help默认True提供-h/--help。add_argument("file_path", type=Path, help=...)登记必填位置参数，返回参数配置对象，当前不接收；type未指定通常保留字符串。parse_args(args=None)默认读取sys.argv[1:]，返回Namespace；缺参数通常抛SystemExit(2)，--help输出帮助并SystemExit(0)。其余可选接口按需学习。
 
@@ -6467,6 +6519,8 @@ Pydantic错误位置字段名是`loc`。本轮曾把状态码写成`400`并把�
 本轮数据库测试文件最终得到`6 passed, 1 warning`：原有3条工作流测试，加上参数化生成的3条非法输入案例。外部查询确认测试标题和标签计数均为0。
 
 ## 使用`pytest.raises()`验证预期异常
+
+2026-10-22补充控制流：Service中的raise仍会中断当前方法，异常向外传播，被pytest.raises捕获后，继续的是with代码块外的测试语句，不会回到Service或继续with块内raise之后的语句。预期ValueError被抛出则继续后续断言；没有异常或异常类型不匹配则该用例失败。这类似外层try/except捕获，但额外检查必须发生预期异常。
 
 ### 为什么不能只让异常自然抛出
 

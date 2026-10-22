@@ -65,6 +65,13 @@ class TaskRecord(Base):
 
     )
 
+    description:Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="",
+        server_default="",
+    )
+
 class TagRecord(Base):
     __tablename__ = 'tags'
     id:Mapped[int]= mapped_column(

@@ -10,6 +10,7 @@ class TaskService:
             title: str,
             priority:str="normal",
             tags:list[str]|None=None,
+            description:str="",
     )->TaskRecord:
 
         title = title.strip()
@@ -22,6 +23,13 @@ class TaskService:
             raise ValueError(
                 "Priority must be low, normal, or high"
             )
+
+        if not isinstance(description,str):
+            raise ValueError("Description must be a string")
+
+        description = description.strip()
+        if len(description)>500:
+            raise ValueError("Description cannot be longer than 500 characters")
 
         cleaned_tags=[]
         if tags is None:
@@ -39,6 +47,7 @@ class TaskService:
         task = TaskRecord(
             title=title,
             priority=priority,
+            description=description,
         )
 
         task_tags=[]
@@ -150,6 +159,17 @@ class TaskService:
                 raise ValueError("Priority must be low, normal, or high")
 
             task.priority = cleaned_priority
+
+        if "description" in update_data:
+
+            if not isinstance(update_data["description"],str):
+                raise ValueError("Description must be a string")
+
+            cleaned_description = update_data["description"].strip()
+            if len(cleaned_description)>500:
+                raise ValueError("Description cannot be longer than 500 characters")
+
+            task.description = cleaned_description
 
         if "tags" in update_data:
 

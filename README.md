@@ -315,7 +315,8 @@ GET /tasks?priority=high&done=false&keyword=python&tag=backend
         "title": "学习 FastAPI",
         "done": false,
         "priority": "high",
-        "tags": ["python", "backend"]
+        "tags": ["python", "backend"],
+        "description": ""
     }
 ]
 ```
@@ -357,12 +358,14 @@ Content-Type: application/json
 {
     "title": "学习创建任务接口",
     "priority": "high",
-    "tags": ["Python", "FastAPI"]
+    "tags": ["Python", "FastAPI"],
+    "description": "练习请求校验和数据库保存"
 }
 ```
 
 - `title` 必填，清理首尾空白后长度必须为 1～100；
 - `priority` 可省略，默认值为 `normal`；
+- `description` 可省略，默认空字符串；清理首尾空白后最多500字符，允许空串或纯空白，显式 `null`、非字符串或超长输入返回422；
 - `tags` 可省略，默认值为空列表；每个标签会清理首尾空白并转成小写；
 - `id` 由服务器生成；
 - `done` 由服务器设置为 `false`。
@@ -375,7 +378,8 @@ Content-Type: application/json
     "title": "学习创建任务接口",
     "done": false,
     "priority": "high",
-    "tags": ["python", "fastapi"]
+    "tags": ["python", "fastapi"],
+    "description": "练习请求校验和数据库保存"
 }
 ```
 
@@ -396,7 +400,9 @@ Content-Type: application/json
 }
 ```
 
-当前支持更新 `title`、`priority` 和 `tags`。省略字段时保留原值，`tags: []` 会清空标签，显式传入 `null` 会返回 `400 Bad Request`。标签中的空白字符串不合法。
+当前支持更新 `title`、`priority`、`tags` 和 `description`。省略字段时保留原值，`tags: []` 会清空标签，显式传入 `null` 会返回 `400 Bad Request`。标签中的空白字符串不合法。备注清理首尾空白后最多500字符；空串或纯空白会清空备注，非字符串或超长备注返回422。所有使用TaskResponse的任务响应均包含字符串description。
+
+已有数据库需先执行 `python -m alembic upgrade head`，通过备注迁移 `7fd5a8884f29` 新增非空description列，旧任务备注补为空字符串。仅更新Python代码或重新构建镜像不会自动升级数据库。旧JSON导入格式本轮不扩展备注，导入任务使用默认空字符串。
 
 ### 完成任务
 

@@ -23,6 +23,7 @@ class TaskCreate(BaseModel):
     title:str=Field(min_length=1,max_length=100)
     priority:str="normal"
     tags:list[str]=Field(default_factory=list)
+    description:str=Field(default="",max_length=500)
 
 #局部更新模型
 class TaskUpdate(BaseModel):
@@ -35,6 +36,7 @@ class TaskUpdate(BaseModel):
     )
     priority:str|None=None
     tags:list[str]|None=None
+    description:str|None=Field(default=None,max_length=500)
 
 #响应模型
 class TaskResponse(BaseModel):
@@ -45,6 +47,7 @@ class TaskResponse(BaseModel):
     done:bool
     priority:str
     tags:list[str]
+    description:str
 
     @field_validator("tags",mode="before")
     @classmethod
@@ -142,6 +145,7 @@ def create_task(
             task.title,
             task.priority,
             task.tags,
+            description=task.description,
         )
 
         session.commit()

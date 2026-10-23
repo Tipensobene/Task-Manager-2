@@ -21,6 +21,7 @@ Task Manager 4.0 是一个使用 Python、FastAPI、SQLAlchemy 和 PostgreSQL �
 ## 主要功能
 
 - 创建、查看、更新、完成和删除任务；
+- 调用DeepSeek将自然语言转换为经过校验的候选任务，由用户确认后通过已有创建接口保存；
 - 为任务添加、更新或清空多个标签；
 - 按优先级、完成状态、标题关键词和标签过滤任务；
 - 查看任务统计信息；
@@ -33,6 +34,27 @@ Task Manager 4.0 是一个使用 Python、FastAPI、SQLAlchemy 和 PostgreSQL �
 - 提供基于 `requests` 的 Python 客户端示例。
 
 ## 技术栈
+
+### AI候选任务使用方式（本机开发）
+
+先按下文数据库运行说明配置数据库并执行已有迁移，再在启动服务的终端配置`DEEPSEEK_API_KEY`。密钥不写入源码或请求体，不打印到日志；当前终端设置的变量由新启动的服务进程继承。模型调用使用`llm_service.py`中的DeepSeek接口配置，可能产生费用。当前本机验收不代表容器已经更新代码或注入模型密钥。
+
+1. 向`POST /ai/task-candidate`发送`{"text": "高优先级学习SQLAlchemy，重点理解Session，标签是Python。"}`。
+2. 成功返回200及候选四字段：`title`、`priority`、`tags`、`description`。该接口不保存任务，不生成任务ID。
+3. 用户检查、修改并确认后，把最终四字段提交给`POST /tasks`；成功返回201，响应包含数据库生成的任务ID。
+4. 用`GET /tasks/{task_id}`读取该ID，确认持久化结果。重新生成才再次调用候选接口，确认保存不再次调用模型。
+
+候选输入`text`必填，去首尾空白后长度1～2000，禁止额外字段；请求校验失败返回422。模型请求、回答解析、候选校验或缺失/空白模型密钥导致的生成失败，在当前实现中统一返回502及`{"detail": "候选任务生成失败，请稍后重试"}`。标签去空白、转小写、保序去重并拒绝空标签。未实现自动重试、候选持久化或前端确认页面；当前可通过Swagger UI手动完成上述流程。
+
+离线验证候选生成与路由（替换模型请求，不使用真实密钥或数据库）：
+
+```powershell
+python -B -m pytest --noconftest -p no:cacheprovider tests/test_deepseek_demo.py tests/test_ai_routes.py -q
+```
+
+请使用已安装项目依赖的Python解释器运行。此命令不包含完整数据库回归。
+
+### 依赖与用途
 
 | 技术 | 用途 |
 | --- | --- |

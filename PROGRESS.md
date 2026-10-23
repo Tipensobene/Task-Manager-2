@@ -1,32 +1,213 @@
 # 学习进度与阶段路线
 
-> 更新日期：2026-10-22。实现状态依据源码与Git核对；最新完整回归为用户在专用测试库执行并反馈129 passed，助手此前实际运行备注隔离测试21 passed。项目使用说明见README.md，长期导师规则见AGENTS.md，详细知识笔记见get_knowledge.md。
+> 更新日期：2026-10-23。用户在专用测试库复核指引后反馈已测试并要求继续，按用户反馈进入提交审阅，未重跑或补写未提供的专用库计数/耗时。此前完整pytest截图为184 passed（当时使用学习库），导师AI两个文件离线55 passed。当前学习位置以第1节最新记录为准，后续阶段细节保留历史依据。项目使用说明见README.md，长期导师规则见AGENTS.md，详细知识笔记见get_knowledge.md。
 
 ## 1. 当前继续位置
 
-2026-10-22理解验收与过渡（当前）：用户已复述主要调用链，经纠正能指出model_dump(exclude_unset=True)区分省略字段；已讲清TaskUpdate是请求模型、Service修改对象/路由提交、PATCH null为400而创建null为422。备注闭环完成，但仍需隔日复现，不标记完全独立掌握。开始阶段五AI Task Manager导学：先规划自然语言解析→候选任务→应用校验→用户确认→复用现有Service保存，先做单条任务，不引入RAG/自主Agent等扩展。本轮仅导学，无安装、API调用或业务代码修改，服务商与模型待选。下一步确认候选生成与数据库保存的边界，再确定调用环境。累计推进2轮。
+### 2026-10-23：已授权本地提交，功能提交完成，学习记录随第二次提交归档
 
-2026-10-22容器备注读写验收反馈（当前）：用户反馈PATCH /tasks/1去除首尾空白、GET重新读取备注及其他字段保持原值均符合预期。结合此前迁移/旧任务补空串反馈，备注功能已完成本机测试与容器手动读写验收；HTTP结果由用户执行反馈，助手未重跑。下一步进行不写代码的跨层执行链复述，检查请求模型、路由、Service、ORM/迁移与响应职责，再安排隔日小范围复现；不以提示下完成等同完全独立掌握。本次文档未提交，未推送。自最近归档累计推进1轮，无新知识需合并。
+- 用户明确回复“执行吧”，授权先前列明的两次本地提交，不包含远程推送。
+- 功能提交已完成：2b6b21d，feat: add AI task candidate generation；包含正式模块、路由挂载、演示入口、两个AI测试文件及README，共10个文件。提交前已将原空暂存快照更新为当前完整代码，并纳入未跟踪测试文件。
+- 本进度记录与get_knowledge.md随第二次提交docs: record AI workflow lessons and verification归档；提交哈希以Git日志为准。当前分支feature/database，不合并、不打标签、不推送。本轮未重跑测试或模型请求，验证依据沿用前述实际结果和用户反馈。
+- 下一学习位置：阶段五最小闭环已交付本地版本，后续先做小范围独立复现与失败分支复习，再按路线逐步学习模型调用的上下文、Token或并发相关内容；不把当前实现视为完整前端或生产部署。提交结束后核对工作区状态。
 
-2026-10-22容器备注升级反馈（最新）：功能40cbc94与文档4f5ddc4均已完成本地提交，未推送。用户截图确认db健康及API镜像构建成功；随后用户反馈一次性容器upgrade到7fd5a8884f29、up启动新版API及GET /tasks/1旧任务返回description空串均符合预期（后三项为用户反馈，非助手重跑）。镜像选择增量知识已合并，归档轮次归零。下一步通过容器Swagger PATCH任务1设置备注，再GET确认保存，检查其他字段保留；尚未完成本轮容器备注写入验证。本次仅改文档，不自动追加提交。
+### 2026-10-23：用户反馈复核已完成，待审阅两次本地提交方案（历史记录）
+
+- 在专用测试库复核指引后，用户明确反馈“我已经测试过了，继续推进吧”。接受用户执行反馈，不再要求重复运行或截图；未将旧学习库184 passed截图改记为专用库证据，不补写新的计数或耗时。
+- 当前最小闭环已完成实现、离线验证、用户真实调用与确认保存读取，进入提交审阅；不等同阶段五所有内容、前端界面或容器部署完成。
+- 拟提交一：feat: add AI task candidate generation，包含api.py、ai_routes.py、llm_service.py、根目录task_candidate.py、examples/llm的3个文件、两个AI测试文件和README.md。拟提交二：docs: record AI workflow lessons and verification，包含get_knowledge.md与PROGRESS.md。
+- 只核对Git状态，未执行add/commit/push。部分新增文件的暂存内容仍为空、实际代码未暂存，两个测试文件尚未跟踪；获批后应按列明路径将完整当前内容暂存，不直接提交旧暂存快照。等待用户对具体本地提交方案明确批准。
+- 自最近归档累计推进2轮，无新增知识需归档。
+
+### 2026-10-23：完整测试184通过，但目标为学习库，待专用库复核（历史记录）
+
+- 用户截图显示先设置TASK_MANAGER_DB_NAME=task_manager_learning，再执行完整pytest -q，结果184 passed in 1.56s；这是学习库环境下的完整测试结果，不能记为专用库验收通过。
+- 导师重新核对conftest：数据库fixture外层事务与create_savepoint，finally回滚并关闭连接；按当前设计测试业务写入应回滚，PostgreSQL序列值可能前进。未连接学习库检查前后数据，不能保证已独立核验毫无影响，不安排清库或删除记录。
+- 下一步在同一终端先设置localhost/task_manager_migration_test，检查current为7fd5a8884f29 (head)，再运行完整pytest；全部完成后才恢复NAME为task_manager_learning。此次重跑用于纠正执行环境，不是仅为重复截图。通过后再整理提交方案，不自动提交推送。
+- 本轮只核对源码并更新记录，未运行测试或连接数据库；自最近知识归档累计推进1轮。
+
+### 2026-10-23：配置与pytest增量已归档，已恢复学习库，待确认完整回归结果（历史记录）
+
+- 按用户要求将HOST/NAME及--noconftest讲解合并到get_knowledge.md既有数据库配置、conftest章节，补进程配置生命周期和离线测试边界。最近归档点为本轮，累计推进归零。
+- 用户截图只显示当前PowerShell已执行TASK_MANAGER_DB_NAME="task_manager_learning"，确认配置恢复；未提供完整pytest结果，也未明确反馈完整回归通过。因此仍待确认，不以切库命令或之前55例离线结果推断完整回归通过。
+- 下一步请用户提供已执行的专用库完整pytest末尾结果，无需为截图重复运行；若尚未执行，再按之前专用测试库流程完成。通过后整理Git提交摘要供审阅，尚无commit/push授权。
+- 本轮只更新文档并核对Git状态，未运行测试或操作数据库；保留全部暂存、未暂存和未跟踪修改。
+
+### 2026-10-23：闭环理解验收通过，待专用测试库完整回归（历史记录）
+
+- 学习者正确说明候选未入库无任务ID、创建经flush取得ID并返回响应；用户取消不进入创建提交；非法priority由TaskCandidate.model_validate拒绝、不保存。补充精确边界：flush发送INSERT后由数据库生成ID并由ORM取回，仍须路由commit提交；取得ID不等同于已提交。理解验收通过，不等同完全独立重建。
+- 导师核对Repository.add_task包含add/flush，tests/conftest.py使用外层事务、create_savepoint及最终回滚。下一步用户停止自己启动的8001服务，在保留数据库密码的原终端把目标明确切换为localhost/task_manager_migration_test，先alembic current确认7fd5a8884f29 (head)，再执行完整pytest；不是在task_manager_learning中运行回归。
+- 此前55例仅两个离线文件，本轮未运行测试，不预先填写完整套件案例数或通过状态。测试回滚不保证序列ID回退；完成回归后需将终端目标恢复为task_manager_learning再用于学习服务。
+- 自最近归档累计推进4轮；本轮为既有flush/commit及候选职责复习，没有新增知识章节，按规则略过重复归档。待完整回归后整理交付记录及Git变更摘要，提交仍需用户明确批准。
+
+### 2026-10-23：本机AI候选确认保存闭环完成，进入理解验收与交付整理（历史记录）
+
+- 用户反馈按上一轮步骤创建及GET查询结果均与预期一致：POST /tasks为201、使用返回ID查询为200，确认后的备注为“重点理解Session和事务”。按用户执行反馈记录本机学习库持久化闭环完成；具体任务ID未提供，导师未重发请求或独立查库。
+- 已完成链路：自然语言生成候选→程序校验→用户修改并确认→现有POST /tasks提交→GET重新读取。属于Swagger手动操作的最小闭环，没有前端确认界面、候选持久化或容器新版部署，不等同阶段五所有内容完成。
+- 本轮补充README的候选接口、确认保存步骤、配置与错误边界及离线测试运行方式。最近自动化结果仍为此前两个文件55 passed，本轮未重跑；完整数据库回归仍待后续专用测试库执行。
+- 下一小步做短答理解验收：候选响应无id而创建响应有id的原因；用户取消候选是否应有新记录；模型输出合法JSON但priority非法由哪层拒绝。随后再安排专用库完整回归和提交审阅，不自动commit/push，也不急于引入新框架。
+- 自最近知识归档累计推进3轮，本轮没有新的方法知识，仅更新功能说明与结果；下轮检查增量归档。
+
+### 2026-10-23：本机学习库迁移完成，待确认候选并保存读取（历史记录）
+
+- 用户确认在此前localhost/task_manager_learning的同一终端执行upgrade head和current，结果与预期7fd5a8884f29 (head)一致；这是用户反馈，导师未重跑迁移或独立查表。
+- 导师核对现有POST /tasks返回201，调用Service后session.commit与refresh；GET /tasks/{task_id}返回已保存记录。下一步用户保持同一终端配置，重新启动本机8001服务，使用上次候选的四字段（备注改为“重点理解Session和事务”以体现人工确认修改）执行一次POST /tasks，记下真实返回id，再GET该id验证字段一致。
+- 本步将有意向本机学习库新增一条任务，不重新调用模型；API不会自动关联先前的候选响应，客户端需提交最终字段。保存与重新查询结果仍待用户反馈，不标记持久化闭环完成。
+- 本轮仅核对源码和更新进度，无测试、数据库操作、模型请求或Git提交推送。自最近知识归档累计推进2轮。
+
+### 2026-10-23：本机学习库停在备注迁移前，待执行已有升级（历史记录）
+
+- 用户在此前已确认localhost/task_manager_learning的同一终端执行alembic current，截图显示连接PostgreSQL成功，当前版本f959d63045e7；尚未达到项目head 7fd5a8884f29。不同数据库独立记录迁移版本，测试库和容器库此前升级不代表本机学习库已升级。
+- 导师重新只读核对7fd5a8884f29迁移：upgrade仅向tasks添加非空Text description列，server_default为空字符串；按该迁移旧记录备注补空串，不删除任务或改其他业务字段。没有执行升级，也未独立查询实际表结构。
+- 下一步用户在同一目录和终端运行已有迁移的alembic upgrade head，再运行alembic current，预期7fd5a8884f29 (head)。这是对本机学习库的结构修改，不重新生成revision，不用stamp绕过。执行结果待反馈，随后再进入候选保存闭环。
+- 本轮仅核对迁移并更新进度，未调用模型、运行测试、提交或推送。自最近知识归档累计推进1轮。
+
+### 2026-10-23：确认保存职责已澄清，本机目标库已确认、待检查迁移（历史记录）
+
+- 学习者最初将确认保存理解为再次生成，经具体示例解释后正确回答POST /tasks。确认保存使用用户最终认可的四字段，只有重新生成才再次调用候选接口；理解已纠正，尚未完成实际保存闭环。
+- 用户截图确认8001服务正常关闭，且在同一PowerShell读取配置得到localhost / task_manager_learning。这是本机学习库，不是task_manager_migration_test或容器库；当前只确认配置目标，尚未验证数据库连接、迁移状态或写入。
+- 导师只读核对三份迁移文件，项目最新版本为7fd5a8884f29（新增description），前一版为f959d63045e7。下一步用户在当前项目目录和同一终端执行python -m alembic current，只查询当前目标库版本；预期7fd5a8884f29 (head)。看到实际输出后再决定是否需要迁移，随后启动8001并手动创建、GET核对；本轮不执行upgrade或写入。
+- 按主动归档规则合并确认/重新生成职责、环境变量生命周期和配置非空/服务调用/数据库验证的区别到get_knowledge.md。最近知识归档点更新为本轮，累计推进归零。未重跑测试、调用模型、修改业务或执行Git提交推送。
+
+### 2026-10-23：真实候选API调用成功，待用户确认与保存闭环（历史记录）
+
+- 用户截图确认本机127.0.0.1:8001的POST /ai/task-candidate返回200：title为“学习SQLAlchemy”，priority为high，tags为["python"]，description为“重点理解Session”。结合用户按指导配置环境并启动正式应用的反馈，记录本机候选生成真实调用验收通过；这是用户执行证据，导师未重发付费请求。
+- 当前实现仅返回候选，没有调用任务Service或数据库提交。该截图不证明数据库连接、迁移版本或保存成功；不能将生成候选等同于完成持久化闭环。前轮55例离线通过仍是最近自动化验证，本轮未重跑。
+- 下一小步先检查学习者对确认边界的理解：用户可编辑候选四字段，确认后应向现有POST /tasks提交最终字段，而非再次请求模型生成。回答后先核对运行服务实际数据库目标与迁移状态，再安排一次有意创建及GET读取的手动闭环；当前尚未指示写入或自动创建记录，不新增确认保存接口。
+- 本轮仅记录用户执行证据并修正知识文档中的密钥检查旧状态，未改业务、提交或推送。自最近知识归档累计推进3轮，下轮检查增量归档。
+
+### 2026-10-23：密钥配置检查验收通过，待真实候选接口调用（历史记录）
+
+- 学习者在llm_service中实现os.getenv默认空字符串、strip及空值RuntimeError，保持输入校验先于密钥读取、密钥检查先于HTTP请求。源码核对通过。
+- 导师新增3组缺失/空串/纯空白配置拒绝且不请求的案例，以及1组合规虚构密钥去空白后用于Authorization的案例。联合执行两个离线测试文件，实际55 passed in 0.69s（生成35+路由20），全部Mock请求、虚构密钥，无真实模型请求或数据库连接。
+- 下一小步：学习者在项目根目录、同一PowerShell中只检查DEEPSEEK_API_KEY及TASK_MANAGER_DB_PASSWORD非空布尔值，不打印凭据；配置齐全后用项目虚拟环境启动本地api:app，绑定127.0.0.1:8001。打开/docs，在ai分组执行一次POST /ai/task-candidate真实请求，检查200、候选四字段及小写标签；不执行POST /tasks，候选不自动保存。
+- 本轮只读发现127.0.0.1:8000已有监听，8001当时未监听；未终止或启动任何服务。用户真正启动时若端口状态变化需另行处理，不能认定8000服务身份或代码版本。正式本机HTTP到模型的端到端结果仍待用户反馈；本轮未修改业务、真实配置，未提交推送。
+- 最近知识归档仍为from error轮次，自该点累计推进2轮；本次测试结果不等同于密钥实际有效或模型服务可达。
+
+### 2026-10-23：正式应用路由挂载验收通过，待补密钥配置检查（历史记录）
+
+- 学习者在api.py导入ai_router并调用app.include_router(ai_router)，保留原有task_router挂载，静态核对通过。
+- 导师在独立Python进程对实际api.app做临时集成验证：OpenAPI包含POST /ai/task-candidate及既有任务列表/创建/详情路由；候选成功200及清理后传参、非法输入422且不生成、生成失败502固定detail均通过。只核对旧任务路由注册，不代表旧任务数据库读写回归。
+- 隔离措施：进程内虚构数据库密码，Mock替换sqlalchemy.create_engine并确认模拟引擎未发生调用；Mock替换生成函数，额外阻止requests.post，使用TestClient不监听端口。无真实数据库或模型请求。此为临时验证，未新增持久测试文件、未重跑上一轮51例；正式运行中的服务器和真实端到端模型调用尚未验收。
+- 下一小步由学习者修改llm_service.generate_candidate的密钥读取：保留输入校验在前，使用os.getenv读取并以空字符串为缺失默认值，strip后为空则抛RuntimeError("模型服务未配置API密钥")，合法值继续用于Authorization。本阶段明确采用生成服务不可用统一返回502及固定公开提示的简化约定，内部异常保留配置原因；这不是把配置问题判断为客户端输入错误。后续导师补缺失/空白配置且不请求的离线测试，再安排真实调用。
+- 本轮导师只执行已授权隔离验收及更新进度，不代写业务、不修改真实环境变量配置或密钥，不提交推送。自最近知识归档累计推进1轮。
+
+### 2026-10-23：HTTP错误转换验收通过，待挂载正式应用（历史记录）
+
+- 已按用户要求将from error、显式__cause__与隐式__context__的区别、HTTP响应边界及完整跨层异常链合并到get_knowledge.md既有异常章节。最近知识归档点为本轮，累计推进重置为0。
+- 导师在tests/test_ai_routes.py新增两例：通过TestClient验证生成失败返回502、固定detail且不包含内部错误文本；直接调用路由捕获HTTPException，验证__cause__是原始RuntimeError对象。业务代码由学习者此前完成，本轮未改。
+- 实际执行项目虚拟环境`python -B -m pytest --noconftest -p no:cacheprovider tests/test_deepseek_demo.py tests/test_ai_routes.py -q`，结果51 passed in 0.78s。31例生成测试与20例请求模型/路由测试联合通过；Mock替换外部调用，未导入正式api应用、未连接数据库或调用真实模型，不代表完整项目回归。
+- 下一小步由学习者在api.py导入ai_routes.ai_router，并在现有app.include_router(task_router)之后添加app.include_router(ai_router)。说明导入只加载定义、挂载把路由注册到正式app；最终路径为POST /ai/task-candidate，正常返回候选但不保存任务。完成后导师再核对正式挂载，不提前声称正式服务已开放接口。
+- 缺密钥等配置错误仍待后续处理；正式应用挂载、真实服务启动与端到端调用尚未验收。未提交或推送，保留原有工作区修改。
+
+### 2026-10-23：主对话进度重新对齐，HTTP错误转换已实现、待验收（历史记录）
+
+- 本次按用户要求重新对齐主线：依据共享PROGRESS.md、当前源码、测试文件及Git状态核对侧对话已落地的推进；未直接读取侧对话消息，也未重新运行测试。不再安排已经完成的候选标签校验和模块迁移。
+- 最新源码比此前进度多一步：ai_routes.py已导入HTTPException，将生成调用置于try，捕获RuntimeError后转换为502与固定detail，并使用from保留原因；成功分支返回candidate。该分支已实现并经静态核对，但tests/test_ai_routes.py尚无生成失败的用例，不能将此前18 passed当作该分支已验收的依据。
+
+- 学习者已实现ai_router、POST /task-candidate、TaskCandidateRequest形参和TaskCandidate响应模型，调用llm_service.generate_candidate(request.text)并返回结果。当前局部变量candidate是候选模型实例，最终HTTP响应由FastAPI生成。
+- 导师扩展tests/test_ai_routes.py：独立FastAPI应用装载真实ai_router，TestClient进程内请求，Mock替换生成函数。新增成功响应200、完整候选JSON及清理后的传参检查，并新增7组非法输入返回422且不调用生成函数的检查。
+- 此前验收记录该文件实际运行18 passed in 0.69s；包含原有10组模型级测试和新增8组路由级测试。无外部模型请求，无数据库连接，未导入正式api应用。正式api.py仍只挂载task_router，因此尚未在正式应用开放候选接口。本次仅核对源码和记录，未重新执行。
+- 下一小步：对已有HTTP错误转换补充离线异常用例并验收，模拟生成函数抛RuntimeError，检查响应502、固定detail及不向客户端暴露内部错误；再回归候选生成和路由测试。通过后安排api.py挂载ai_router。请求模型错误继续由FastAPI处理为422；缺密钥等配置问题仍待单独处理，不标记已覆盖。
+- 前一轮导师修改测试和进度，业务由学习者实现；本次对齐只更新进度，不改业务或测试，不执行模型请求、数据库操作、Git提交或推送。最近归档仍为模块迁移轮次，累计推进保持2轮，本次进度同步不计新增学习轮次。
+
+### 2026-10-23：候选请求模型验收通过，开始路由成功流程（历史记录）
+
+- 学习者已在ai_routes.py实现TaskCandidateRequest：字符串去首尾空白、extra=forbid、必填text:str、清理后长度1～2000，源码核对符合要求。
+- 导师新增tests/test_ai_routes.py，包含3组合法输入（普通清理、2000字符、清理前超过2000但清理后恰好2000）及7组非法输入（缺失、null、数字、空串、纯空白、2001字符、额外字段）。实际运行`python -B -m pytest --noconftest -p no:cacheprovider tests/test_ai_routes.py -q`，10 passed in 0.13s；仅模型级验证，没有HTTP或数据库调用，不代表路由已接通。
+- 下一小步由学习者在ai_routes.py添加ai_router（prefix=/ai，文档分组ai）及同步generate_task_candidate路由：POST /task-candidate，请求形参TaskCandidateRequest，response_model=TaskCandidate，调用llm_service.generate_candidate(request.text)并返回候选。默认成功200；候选生成不调用TaskService或提交数据库。先实现成功流程，随后导师用Mock验证路由，再安排异常HTTP映射和api.py挂载；本轮尚无实际可访问的新接口。
+- 本轮导师仅编写测试、记录结果并讲解下一步，未代写业务接口、未调用真实模型、未提交或推送。自最近知识归档累计推进1轮。
+
+### 2026-10-23：模块迁移验收通过，开始候选API请求模型（历史记录）
+
+- 实时核对：根目录task_candidate.py定义唯一TaskCandidate，llm_service.py定义generate_candidate且末尾不再执行示例；examples/llm/deepseek_demo.py导入正式函数并保留main保护的示例入口；旧模型文件只重新导出根目录类。学习者已添加examples/llm/__init__.py。
+- 实际验证：候选离线文件31 passed in 0.35s；独立进程移除密钥并用Mock阻止HTTP，三项身份断言通过（演示与Service函数、旧路径与根目录类、Service所用类），导入时没有请求。此项为临时导入验证，不是新增仓库测试用例；未连接数据库或调用真实模型，未执行完整回归。
+- 编辑器问题：用户已单独打开项目、选择原虚拟环境并标记源码根目录；此前提示仍在，添加llm/__init__.py后截图确认自导入错误消失，剩余未使用导入提示。不能把首次无解释器时错误暂时消失视为修复，也不能把终端导入通过等同于IDE检查通过。
+- 已主动归档：将模块迁移、重新导出、解释器/源码根/包标记的区别及实际排查结果合并到get_knowledge.md阶段五；修正测试当前模块名说明。最近归档点更新为本轮，累计推进轮次重置为0。
+- 下一小步由学习者新建根目录ai_routes.py，仅定义TaskCandidateRequest：继承BaseModel，ConfigDict去首尾空白并禁止额外字段，必填text:str，Field限制清理后1～2000字符。先验收请求模型，再添加计划中的POST /ai/task-candidate及挂载。最终接口只返回候选，确认保存仍走现有POST /tasks；本轮尚未创建或接通候选API。
+- 本轮导师只更新文档并运行已授权的迁移验收，没有代写请求模型或接口，没有提交或推送。
+
+### 2026-10-23：正式模块功能通过，迁移收尾待修正（历史记录）
+
+- 学习者已创建根目录llm_service.py和task_candidate.py；Service从根目录模型导入TaskCandidate，函数和标签规则已复制完整。
+- 导师已将tests/test_deepseek_demo.py的业务导入、函数调用和post替换位置统一改为llm_service。实际运行同一离线命令，31 passed in 0.36s；未连接数据库或调用真实模型。
+- 另在独立Python进程移除密钥并用Mock阻止post，确认导入正式模块及演示模块不读取必需密钥或调用HTTP。身份检查结果：Service使用正式模型为True；演示generate_candidate与Service函数相同为False；旧路径候选类与正式类相同为False。
+- 迁移未完全验收：examples/llm/deepseek_demo.py仍保留完整函数定义，且导入的是llm_service.TaskCandidate；examples/llm/task_candidate.py仍定义另一份类；llm_service.py末尾仍保留受main保护的示例调用。最后一项不会导致import自动请求，但示例入口应集中到演示脚本。
+- 下一小步：学习者将演示脚本改为导入generate_candidate并保留main示例调用；旧模型文件改为仅从根目录导入TaskCandidate；正式Service保留导入和函数，移出末尾示例执行块。完成后再验收模块复用关系，随后进入候选API。未代改业务代码，未提交或推送。
+- 最近知识归档点仍为侧对话补充，自该点累计推进2轮；本轮仅更新测试和进度记录。
+
+### 2026-10-23：候选标签保序去重验收，准备迁入正式模块（历史记录）
+
+- 已实现并静态核对：normalize_tags在strip、lower、空值拒绝之后，只有cleaned_tag尚未出现时才append，返回首次出现顺序不变的唯一标签列表。
+- 本轮导师新增两项参数化测试，共6组：两种重复标签顺序、空列表，以及空串/纯空格/制表符换行标签拒绝。经generate_candidate完整走模拟响应、JSON解析、Pydantic及异常转换链；非法标签同时核对RuntimeError、ValidationError原因和具体空标签消息。
+- 实际验证：使用项目虚拟环境运行`python -B -m pytest --noconftest -p no:cacheprovider tests/test_deepseek_demo.py -q`，结果31 passed in 0.54s。--noconftest避免加载根测试配置中的数据库依赖；所有HTTP调用由Mock替换，使用虚构密钥，未连接数据库或调用模型。不代表完整套件通过。
+- 下一小步由学习者完成模块迁移：项目根目录task_candidate.py承载现有TaskCandidate；llm_service.py承载现有generate_candidate并从根目录导入TaskCandidate；examples/llm/task_candidate.py保留为兼容导入，避免删除文件和重复定义；examples/llm/deepseek_demo.py只导入正式生成函数并保留main示例调用。业务规则保持本次通过的行为。导师在学习者完成后调整测试导入和Mock替换位置，验证导入不请求及离线回归，再进入候选API接入。
+- 本轮仅由导师新增测试、更新验收和已有知识章节的实现状态，未代写业务功能、未提交或推送。最近知识归档点仍为下方侧对话补充，自该点累计推进1轮。
+
+### 2026-10-23：离线测试讲解归档（历史记录）
+
+- 已讲解：tests/test_deepseek_demo.py逐行执行过程，包括fixture准备与恢复、请求Mock和响应Mock的关系、普通辅助函数、返回值/异常模拟、调用参数记录、分层失败及异常原因断言。本次侧对话补充了两层return_value、输入与模拟title相互独立、真实参数构造与模拟发送的关系、assert_called_once_with的参数和次数、缺密钥检验输入校验顺序，以及ValueError→ValidationError→RuntimeError的具体执行链。用户反馈已理解；不据此标记已独立编写测试。
+- 已归档：2026-10-23按用户本次要求，将上述追问增量检索后合并到get_knowledge.md阶段五、通用Mock及pytest.raises对应章节，补具体示例和正常/异常流程，纠正备注长度限制与自定义标签验证器的来源区别。最近归档点为本次侧对话补充；累计推进轮次重置为0。
+- 实时源码依据：generate_candidate已实现输入及分层响应校验；本次只读核对TaskCandidate已有normalize_tags after验证器，包含strip、lower和空标签拒绝，但仍直接append，尚未保序去重。TaskService.create_task已有标签去空白、转小写、空值拒绝和保序去重规则。用户已明确空白标签应在交给用户确认前被拒绝；以上源码观察不代表新功能已测试通过。
+- 已测试：2026-10-22的tests/test_deepseek_demo.py离线25 passed为历史实际结果。本轮未运行测试、未调用外部模型、未连接数据库；未把历史完整回归与新增案例相加作为新回归结果。
+- 主线程继续位置：候选标签规则仍待完成与验收；已有after验证器，剩余保序去重及对应离线用例待处理。目标仍为[" Python ", "SQL", "python"]得到["python", "sql"]，空列表允许，包含纯空白标签拒绝。本次侧对话只归档答疑，不执行主线程的实现或验收步骤，也不提前安排候选接口接入。
+- 本轮仅维护学习文档与进度，没有代写业务逻辑；没有执行Git提交或推送，保留原有未提交和暂存修改。
+
+### 此前推进记录（保留当时状态，不作为当前待办）
+
+2026-10-22候选异常与可重复测试验收（历史记录）：用户已捕获ValidationError并转换RuntimeError保留cause。导师新增tests/test_deepseek_demo.py，实际执行25 passed，覆盖合法候选及传参、输入失败不请求、网络/HTTP/外层JSON/结构/content/内层JSON/候选校验分层与异常原因。测试均Mock替换post、虚构密钥，未连接数据库或调用模型；仅本文件通过，不代表完整套件154通过。下一步先讲清测试fixture与响应构造辅助函数的执行链，再检查标签业务规则与候选和保存契约一致性，随后安排接口接入；不提前声称可保存全部候选。累计推进2轮。
+
+2026-10-22内层JSON异常验收（历史记录）：空回答已改RuntimeError，json.loads独立捕获json.JSONDecodeError并from保留原因。导师5组临时离线验证通过：空/纯空白、两种非法内层JSON、合法候选；未发送请求。下一步捕获TaskCandidate.model_validate的pydantic.ValidationError并转换“模型候选任务字段不合法”的RuntimeError；解析成功的列表/null/缺title/非法priority/额外字段都属于候选校验失败。累计推进1轮。
+
+2026-10-22回答结构首版验收（历史记录）：缺键/空choices/错误类型已转换RuntimeError，非字符串回答也拒绝，正常候选路径通过。离线8组异常模拟发现空串/纯空白回答抛ValueError而非约定RuntimeError，需修正；6组结构/类型案例符合约定。首次验证因空回答类型不符中断，随后分类复核确认上述结果，无外部调用。下一步学习者将空answer的ValueError改为RuntimeError，再补内层json.loads的json.JSONDecodeError转换。达到4轮已合并输入/外部错误分类、窄try、多异常与from因果链知识，归档计数归零。
+
+2026-10-22外层JSON异常验收（历史记录）：response.json独立try并捕获requests.exceptions.JSONDecodeError，转换RuntimeError且保留cause；导师模拟非法外层JSON和正常响应2例通过，无网络调用。下一步为choices/message/content提取单独捕获KeyError/IndexError/TypeError，随后明确要求answer为非空字符串，避免合法外层JSON缺字段或空回答进入内层解析；JSON文本与候选字段异常继续后续处理。累计推进3轮，下轮归档异常分层知识。
+
+2026-10-22请求异常封装验收（历史记录）：try仅包含post与raise_for_status，捕获requests.RequestException后raise RuntimeError并from保留原因；助手模拟超时、连接错误、HTTP错误与成功响应4场景通过，HTTP失败未调用json，无网络调用。下一步仅处理response.json解析失败，使用requests.exceptions.JSONDecodeError并转换为“模型服务响应不是合法JSON”；回答结构提取、内层JSON与Pydantic分后续小步处理。累计推进2轮。
+
+2026-10-22请求前输入验收（历史记录）：用户实现先类型检查再strip/非空/2000字符限制，位于读取密钥前。与上一轮建议不同，非字符串抛TypeError；该语义合理，保留并明确契约，空白/超长抛ValueError。导师7组临时离线测试通过：无密钥时非法输入先被拒绝且post未调用，合法输入去空白与清理后2000字符允许。未调用模型。下一步先封装请求阶段requests.RequestException为模型服务错误，讲清try/except与raise from异常链，JSON/候选异常随后分步处理。累计推进1轮。
+
+2026-10-22函数封装验收（历史记录）：generate_candidate已正确封装读取密钥/请求/解析/校验，user.content使用text，返回TaskCandidate，示例调用与打印受main保护。助手离线验证无密钥导入不请求、输入正确转发、返回清理后的候选对象及状态检查，均通过；未调用外部模型。达到4轮后已合并候选模型方法、长度限制、模块运行及函数生命周期知识，归档计数归零。下一步先给generate_candidate补请求前输入类型/空白/长度检查，避免无效输入也发送请求，再安排异常分层。业务代码继续由用户修改。
+
+2026-10-22候选校验链路验收（历史记录）：用户反馈真实运行输出符合预期；助手核对完整导入路径、model_validate与model_dump，并模拟HTTP响应运行模块，合法数据去空白/非法priority抛ValidationError均通过，无付费调用。下一步把演示顶层逻辑整理为generate_candidate(text: str)->TaskCandidate，读取密钥与请求留在函数内，用户消息来自text，返回校验对象；打印和示例调用放main保护，避免导入即请求，便于后续隔离测试。仅教学示例重构由用户实现，不接数据库。累计推进3轮，下轮增量归档。
+
+2026-10-22候选模型修正验收（历史记录）：description已补Field(default="", max_length=500)，导师运行8组临时离线验证通过：默认值、去空白、清理后500字符接受，501字符/null备注/空白标题/非法优先级/额外id拒绝。未调用外部API或数据库。下一步在deepseek_demo.py中导入TaskCandidate，在json.loads后调用model_validate并通过model_dump展示候选数据；使用python -m examples.llm.deepseek_demo确保从项目根目录导入，无需修改sys.path，先完整解释两方法输入输出，再由用户实现。累计推进2轮。
+
+2026-10-22候选模型首版验收：TaskCandidate标题长度、Literal优先级、独立列表默认值、去空白及额外字段拒绝已实现。导师临时离线验证确认默认/去空白/列表隔离，以及空标题、超长标题、非法优先级、额外id和null备注拒绝均符合预期；发现description仅str默认空串，缺max_length=500，501字符实际被接受，故未完全通过。下一步学习者将description改为Field(default="", max_length=500)，再验收并接入解析链。本轮未调用模型/数据库、未代改业务源码。累计推进1轮。
+
+2026-10-22候选模型前归档（历史记录）：已检索并合并自上次归档以来的system/user、JSON模式作用范围、两层JSON解析、类型识别和Pydantic候选边界；Literal知识引用既有章节，未重复新建。用户已能说明response_format约束content而非外层响应。最近归档点更新，累计推进归零。实时核对examples/llm目前仅deepseek_demo.py，task_candidate.py尚未创建；下一步学习者先按已讲解规则定义候选模型，暂不增加真实调用或数据库操作。本轮仅改文档，未运行测试或提交。
+
+2026-10-22两层JSON解析验收（历史记录）：学习者已增加response_format=json_object与json.loads(answer)，源码核对通过。助手以Mock替换requests.post并用虚构密钥运行脚本，确认answer是str、candidate是dict、提取title及调用状态检查正确；无网络或付费调用，不代表本轮真实服务结果已核验。下一步在独立examples/llm/task_candidate.py定义Pydantic候选模型，禁止额外字段，限定标题/备注长度与优先级，先离线校验，不导入路由/数据库。累计推进约3轮，下一轮合并system/user与两层JSON知识。
+
+2026-10-22首次模型调用验收（历史记录）：用户截图确认deepseek_demo.py真实请求成功并打印事务解释；源码核对post、raise_for_status、json及choices提取已实现，timeout实际为(10,20)。助手未执行付费调用。按约定归档阶段五增量知识，计数归零。下一步只修改messages，先学习system规则与user输入的职责，让模型返回候选任务JSON文本；JSON输出模式和二次解析随后逐步加入，尚未实现候选校验或API接入。
+
+2026-10-22阶段五首次调用准备（历史记录）：用户确认已有DeepSeek官方开放平台密钥，并反馈当前终端Python读取非空变量为True；未将其视为密钥有效性验证。已静态检查examples/llm/deepseek_demo.py：环境变量读取、官方chat/completions地址、Bearer头、deepseek-flash和messages/stream字段正确，未执行脚本或付费请求。官方文档核对调用名称deepseek-flash对应V4.1-Flash-1017，不等同永久固定版本。下一步学习者添加requests.post的headers/json/timeout、raise_for_status和JSON响应提取，并手动执行一次最小调用；不连接任务数据库。累计推进约3轮，下一轮检查知识归档。
+
+2026-10-22远程备份及阶段五继续点（历史记录）：已按用户授权完成文档提交d1642d3，并成功推送feature/database、建立origin上游；ls-remote核对远程与本地同为d1642d3642b398c01138e39d115111f3e5661da8，未合并main、未打标签发布。恢复阶段五导学，当前先确认“解析返回候选但不保存，用户确认后复用现有创建接口”的职责边界；模型服务商/凭据/依赖尚未配置，没有发生模型调用。下一步用户解释解析成功是否应产生数据库记录，再按实际可用服务确定单次调用实验。阶段四仍保留隔日复现任务。本记录为推送后新增未提交文档，不自动提交。
+
+2026-10-22理解验收与过渡（历史记录）：用户已复述主要调用链，经纠正能指出model_dump(exclude_unset=True)区分省略字段；已讲清TaskUpdate是请求模型、Service修改对象/路由提交、PATCH null为400而创建null为422。备注闭环完成，但仍需隔日复现，不标记完全独立掌握。开始阶段五AI Task Manager导学：先规划自然语言解析→候选任务→应用校验→用户确认→复用现有Service保存，先做单条任务，不引入RAG/自主Agent等扩展。本轮仅导学，无安装、API调用或业务代码修改，服务商与模型待选。下一步确认候选生成与数据库保存的边界，再确定调用环境。累计推进2轮。
+
+2026-10-22容器备注读写验收反馈（历史记录）：用户反馈PATCH /tasks/1去除首尾空白、GET重新读取备注及其他字段保持原值均符合预期。结合此前迁移/旧任务补空串反馈，备注功能已完成本机测试与容器手动读写验收；HTTP结果由用户执行反馈，助手未重跑。下一步进行不写代码的跨层执行链复述，检查请求模型、路由、Service、ORM/迁移与响应职责，再安排隔日小范围复现；不以提示下完成等同完全独立掌握。本次文档未提交，未推送。自最近归档累计推进1轮，无新知识需合并。
+
+2026-10-22容器备注升级反馈（历史记录）：功能40cbc94与文档4f5ddc4均已完成本地提交，未推送。用户截图确认db健康及API镜像构建成功；随后用户反馈一次性容器upgrade到7fd5a8884f29、up启动新版API及GET /tasks/1旧任务返回description空串均符合预期（后三项为用户反馈，非助手重跑）。镜像选择增量知识已合并，归档轮次归零。下一步通过容器Swagger PATCH任务1设置备注，再GET确认保存，检查其他字段保留；尚未完成本轮容器备注写入验证。本次仅改文档，不自动追加提交。
 
 2026-10-22本地提交：用户明确批准既定两次提交方案，功能已提交40cbc94（feat: add task descriptions），教学规范/知识笔记/进度作为随后独立文档提交。本轮未推送、合并或发布。下一步容器更新先准备已有容器数据库密码并检查Compose配置、启动db和重新构建api；构建成功后再执行迁移及更新API容器，最后验证旧任务备注和新备注读写。新构建本身不迁移数据库，也不替换正在运行的API容器。累计推进3轮，无新增知识归档。
 
-2026-10-22完整回归反馈（当前）：用户反馈完整pytest结果符合预期129 passed；与助手此前实际执行的备注隔离21 passed区分记录。本轮更新README的备注请求/响应与PATCH规则、数据库升级要求，未改业务代码、未重跑测试。备注功能在分级提示下实现及验收，尚不代表完全独立重建。下一步审阅并提交功能与教学文档；须获得用户明确提交授权。容器演示数据库/镜像仍未升级备注版本，不把本机测试通过视为容器交付更新完成。自最近归档累计推进2轮。
+2026-10-22完整回归反馈（历史记录）：用户反馈完整pytest结果符合预期129 passed；与助手此前实际执行的备注隔离21 passed区分记录。本轮更新README的备注请求/响应与PATCH规则、数据库升级要求，未改业务代码、未重跑测试。备注功能在分级提示下实现及验收，尚不代表完全独立重建。下一步审阅并提交功能与教学文档；须获得用户明确提交授权。容器演示数据库/镜像仍未升级备注版本，不把本机测试通过视为容器交付更新完成。自最近归档累计推进2轮。
 
 2026-10-22结构检查反馈：用户反馈专用测试库alembic check输出符合预期，即No new upgrade operations detected；按工具检测范围记录模型与库结构无新增差异。导师只读核对conftest的外层事务/保存点/最终回滚及测试隔离安排。下一步用户在同一已配置测试库的终端运行完整pytest，结果待回传，尚不标记完整回归通过。累计推进1轮。
 
 2026-10-22最新继续位置：已完成备注测试逐行讲解，并将fixture/依赖替换执行链、StaticPool与SQLite内存连接关系、dispose边界、Mock动态属性及类型注解、raises异常传播与捕获等增量合并到知识文档。用户能解释仅关闭线程检查无法保证同连接。本次归档计数归零。此前21 passed为2026-10-21隔离测试结果，本轮未重新测试。下一步恢复本机专用task_manager_migration_test连接配置，运行alembic check确认结构一致，再安排完整PostgreSQL回归；容器仍未更新，未提交。
 
-2026-10-21备注回归测试（最新）：已核对update_task在strip前补充字符串检查。新增tests/test_task_description.py，使用内存SQLite和Mock隔离验证，实际执行该文件21 passed；覆盖创建/详情/列表、默认值及清理后500字符、PATCH省略保留/清空/替换、非法请求不改变备注、直接Service拒绝None/数字/超长值。未连接PG、不代表完整pytest回归或PG迁移测试通过，容器仍为旧镜像。下一步讲解新增测试的执行链，再核对README备注契约并安排专用PG库回归；尚未提交。本轮按4轮推进归档增量知识，计数归零。
+2026-10-21备注回归测试（历史记录）：已核对update_task在strip前补充字符串检查。新增tests/test_task_description.py，使用内存SQLite和Mock隔离验证，实际执行该文件21 passed；覆盖创建/详情/列表、默认值及清理后500字符、PATCH省略保留/清空/替换、非法请求不改变备注、直接Service拒绝None/数字/超长值。未连接PG、不代表完整pytest回归或PG迁移测试通过，容器仍为旧镜像。下一步讲解新增测试的执行链，再核对README备注契约并安排专用PG库回归；尚未提交。本轮按4轮推进归档增量知识，计数归零。
 
 2026-10-21PATCH备注本轮验收：导师以临时内存SQLite运行8组HTTP验证，省略保留、文本替换去空白、空串/纯空白清空、500字符通过；null返回400、数字/501字符返回422且原备注保留。发现update_task备注分支缺少字符串类型检查，直接调用Service传数字会抛AttributeError而非约定ValueError，故尚未完全通过。下一步学习者在strip之前补isinstance检查，随后验收Service边界并安排仓库可重复测试。未连接PG、未运行完整pytest、未代写业务代码。自最近归档累计推进3轮。
 
-2026-10-21创建与读取备注链路验收（最新）：TaskCreate已新增默认空串且max_length=500的description，创建路由正确传参，TaskResponse新增字符串字段。导师运行临时内存SQLite接口验证，覆盖创建/详情/列表返回备注、缺省、空白清理、500字符及清理前超长清理后合法、null/数字/501字符返回422，均通过。未连接PostgreSQL，此验证不覆盖PG迁移或完整仓库测试，未升级容器镜像。下一步小步补齐PATCH备注：TaskUpdate登记可省略字段，Service对显式null/非字符串拒绝、清理及长度校验后赋值；已有update_data分支先检查null可复用。自最近知识归档累计推进2轮。
+2026-10-21创建与读取备注链路验收（历史记录）：TaskCreate已新增默认空串且max_length=500的description，创建路由正确传参，TaskResponse新增字符串字段。导师运行临时内存SQLite接口验证，覆盖创建/详情/列表返回备注、缺省、空白清理、500字符及清理前超长清理后合法、null/数字/501字符返回422，均通过。未连接PostgreSQL，此验证不覆盖PG迁移或完整仓库测试，未升级容器镜像。下一步小步补齐PATCH备注：TaskUpdate登记可省略字段，Service对显式null/非字符串拒绝、清理及长度校验后赋值；已有update_data分支先检查null可复用。自最近知识归档累计推进2轮。
 
-2026-10-21Service备注验收（最新）：TaskService.create_task已增加末尾description默认空串参数，先检查字符串再strip、检查500字符限制，并传入TaskRecord。导师通过Mock替代Repository运行8组临时隔离验证：省略、去空白、纯空白、500字符、清理前超长但清理后500字符通过；None、数字、501字符抛ValueError且不查询标签/保存。未连接数据库，未运行仓库pytest套件；此为临时验证，不是新增持久测试文件。按主动归档规则合并SQL表达式别名及先校验后构造对象知识，本次归档计数归零。下一步学习者修改TaskCreate、TaskResponse与创建路由传参，暂不扩展PATCH。
+2026-10-21Service备注验收（历史记录）：TaskService.create_task已增加末尾description默认空串参数，先检查字符串再strip、检查500字符限制，并传入TaskRecord。导师通过Mock替代Repository运行8组临时隔离验证：省略、去空白、纯空白、500字符、清理前超长但清理后500字符通过；None、数字、501字符抛ValueError且不查询标签/保存。未连接数据库，未运行仓库pytest套件；此为临时验证，不是新增持久测试文件。按主动归档规则合并SQL表达式别名及先校验后构造对象知识，本次归档计数归零。下一步学习者修改TaskCreate、TaskResponse与创建路由传参，暂不扩展PATCH。
 
-2026-10-21备注迁移执行验收（最新）：用户截图确认localhost/task_manager_migration_test从f959d63045e7升级到7fd5a8884f29，无报错；查询展示两条旧任务，description为空串且description_is_empty均为true。截图未展示迁移前完整对照，故其他字段完全不变尚无充分对照证据。未由助手运行测试，也未升级其他数据库。下一步学习者仅修改TaskService.create_task：末尾新增description默认空串参数、字符串类型校验、strip及规范化后500字符限制，并传入TaskRecord；路由/响应下一小步。自最近归档累计推进约3轮，下一轮检查增量知识归档。
+2026-10-21备注迁移执行验收（历史记录）：用户截图确认localhost/task_manager_migration_test从f959d63045e7升级到7fd5a8884f29，无报错；查询展示两条旧任务，description为空串且description_is_empty均为true。截图未展示迁移前完整对照，故其他字段完全不变尚无充分对照证据。未由助手运行测试，也未升级其他数据库。下一步学习者仅修改TaskService.create_task：末尾新增description默认空串参数、字符串类型校验、strip及规范化后500字符限制，并传入TaskRecord；路由/响应下一小步。自最近归档累计推进约3轮，下一轮检查增量知识归档。
 
 2026-10-21命令行补习后归档：已合并PowerShell调用运算符、引号、工作目录、两层-m及PATH/sys.path、包入口的知识；用户已正确解释工作目录和两层-m。本次重新作为归档计数起点（0轮）。源码核对发现学习者已生成7fd5a8884f29_add_task_description.py：继承f959d63045e7，upgrade仅新增Text备注列、server_default空串且非空，downgrade移除该列；候选脚本静态验收通过。未运行测试、未核实本轮数据库目标或是否已执行迁移。下一步用户先在专用测试库确认数据库名称与current，再执行upgrade并检查旧任务字段保留及description空串。
 

@@ -1,5 +1,293 @@
 # 学习问题与知识沉淀
 
+## 阶段五：DeepSeek调用、候选校验与离线测试（2026-10-22起）
+
+### 从自然语言到候选任务：消息、格式与校验
+
+#### 输入与异常按阶段处理
+
+generate_candidate在读取密钥和请求前检查text：非字符串抛TypeError，strip后为空或超过2000字符抛ValueError。2000是应用实验限制，不是模型上限。异常分类区分调用者输入错误与外部服务响应错误；例如用户输入空白是ValueError，模型返回空白属于RuntimeError，不能仅按“都是空字符串”使用同一类别。
+
+post与raise_for_status放在同一个局部try中，捕获requests.RequestException（含超时/连接/HTTP错误）并转换为RuntimeError。response.json独立捕获requests.exceptions.JSONDecodeError；提取choices[0].message.content独立捕获KeyError（键缺失）、IndexError（列表越界）、TypeError（结构类型不符）。多异常可写except (KeyError, IndexError, TypeError)。取值成功不代表内容有效，还需确认answer为字符串、strip后非空，再解析内层JSON；json.loads异常和Pydantic字段异常应各自分阶段处理。
+
+raise RuntimeError("说明") from error在外层提供明确失败类别，同时用异常链保留原始原因，可通过异常对象.__cause__检查。转换异常会结束当前函数，不自动重试或继续解析；窄范围try避免把不相关错误误报为请求失败。导师使用Mock的side_effect模拟抛异常，并检查失败后response.json未调用，不需要付费请求。
+
+2026-10-23路由异常转换补充：`except RuntimeError as error`中的error指向已有异常；`HTTPException(status_code=502, detail="候选任务生成失败，请稍后重试")`创建另一个异常对象，raise将新对象抛出。原异常没有被改成HTTPException，也不会因from而重新执行请求。
+
+| 当前except块中的写法 | 新异常的`__cause__` | 新异常的`__context__` | 表达的关系 |
+| --- | --- | --- | --- |
+| `raise http_error from error` | 明确指向error | 记录正在处理的原异常 | 原异常是新异常的直接原因 |
+| `raise http_error`（新建异常） | 默认为None | 自动记录正在处理的原异常 | 处理原异常期间出现新异常 |
+
+因此不能说“不加from就一定丢失原异常”。当前场景中Python仍通过隐式上下文保留它；from用于明确说明这是有意的异常转换。当完整异常链被展示时，显式原因之间通常显示“The above exception was the direct cause of the following exception”；隐式上下文通常显示“During handling of the above exception, another exception occurred”。这只是异常链的展示方式，from本身不会打印日志，已由FastAPI处理的HTTPException也不保证在终端打印堆栈。
+
+当前项目的具体执行链为：
+
+```text
+requests.post请求超时 → Timeout
+    ↓ llm_service捕获，再raise RuntimeError(...) from error
+RuntimeError("模型服务请求失败")，__cause__指向Timeout
+    ↓ ai_routes捕获，再raise HTTPException(...) from error
+HTTPException(502, 固定提示)，__cause__指向RuntimeError
+    ↓ FastAPI默认异常处理
+客户端收到502和{"detail": "候选任务生成失败，请稍后重试"}
+```
+
+使用默认HTTP异常处理时，是否写from不改变上述状态码和detail；`__cause__`不会自动进入响应JSON。内部保留原因与对客户端返回固定提示可以同时实现。请求模型非法输入仍返回422；当前约定将生成函数的RuntimeError统一转为502。后续已补密钥配置检查：os.getenv("DEEPSEEK_API_KEY", "")读取后strip，缺失或空白主动抛RuntimeError("模型服务未配置API密钥")，也进入这一固定502响应分支；这是当前阶段的简化错误约定。读取非空不代表密钥实际有效。
+
+测试分别检查两个边界：通过TestClient发送请求，验证502、固定detail及内部错误文本未出现在响应中；直接调用路由函数，用`pytest.raises(HTTPException)`捕获异常对象，再检查`caught.value.__cause__ is original`。直接函数调用不会自动执行FastAPI的请求解析，因此测试先自行构造合法TaskCandidateRequest；它补充异常对象检查，不能替代HTTP测试。两项均用Mock模拟生成失败，不调用真实模型。通用pytest.raises与对象身份检查见本文已有对应章节。
+
+候选模型已实现，备注Field(default="", max_length=500)不可遗漏，否则仅str默认空串仍接受501字符；已离线验证清理后500字符允许、501字符拒绝。TaskCandidate.model_validate(candidate)输入解析后的字典，成功返回校验/清理/补默认值后的模型实例，失败抛ValidationError。字典用candidate["title"]，模型用validated_candidate.title；model_dump()把模型导出为Python字典，不保存数据库或重新校验。完整导入examples.llm.task_candidate配合从项目根目录python -m examples.llm.deepseek_demo运行，模块名称不带.py。
+
+generate_candidate(text: str)->TaskCandidate封装读取密钥、请求、解析及校验，user消息content取自text，return交还候选对象，打印属于调用入口。所有请求代码放在函数内，if __name__ == "__main__"仅保护示例调用：导入模块只定义函数，不读密钥或发送请求；-m运行则进入示例入口。离线测试以Mock替换requests.post，既能检查传入文字，也能模拟响应验证返回对象，不消耗模型费用。用户真实调用成功与助手离线验证分别记录。
+
+#### 候选生成的离线测试：从准备数据到检查结果（2026-10-23）
+
+对应`tests/test_deepseek_demo.py`。目标是验证：给定一种输入和一种模型服务返回情况，自己的`generate_candidate()`会怎样处理。测试用预设响应替代网络，输入检查、请求参数组装、回答结构提取、`json.loads()`和Pydantic校验仍执行项目中的真实代码。它不能证明真实服务可访问，也不能证明模型总能理解用户意图。
+
+2026-10-23模块迁移后，测试实际使用`import llm_service`，调用`llm_service.generate_candidate()`，并替换`llm_service.requests.post`。本节涉及deepseek_demo属性的早期示例保留迁移前语境；当前正式调用关系见下文“正式模块复用与PyCharm导入提示”。
+
+**先区分两个模拟对象和一个真实函数：**
+
+| 名称 | 在本测试中扮演的角色 | 谁会使用它 |
+| --- | --- | --- |
+| `mock_post` | 模拟发送请求的可调用对象 | `generate_candidate()`执行`requests.post(...)`时 |
+| `response` | 模拟请求返回的响应对象 | 随后的`raise_for_status()`与`json()`调用 |
+| `generate_candidate` | 被测试的真实业务函数 | 测试函数直接调用 |
+
+模拟关系由两条赋值建立，变量名本身不会决定Mock的类型：
+
+```python
+response.json.return_value = {
+    "choices": [{"message": {"content": content}}],
+}
+mock_post.return_value = response
+```
+
+第一条登记“以后调用`response.json()`时返回什么”；第二条登记“以后调用`mock_post(...)`时返回哪个对象”。此时尚未调用业务函数。真实的`requests.post(...)`发送POST请求后返回响应对象，不是返回一个“POST请求”；这里用`response`模拟该响应，用`mock_post`模拟发送请求的函数。模拟对象的通用方法与调用记录见下文“Mock为何能够代替Repository”中的补充。
+
+**两个返回值不会因为赋值而合并：**
+
+```python
+body = {"choices": []}
+response = Mock()
+mock_post = Mock()
+
+response.json.return_value = body  # 调用response.json()才得到body。
+mock_post.return_value = response  # 调用mock_post(...)先得到response。
+
+received_response = mock_post("https://example.com")
+assert received_response is response
+
+received_body = received_response.json()
+assert received_body is body
+```
+
+对应的业务执行链是`requests.post(...) → response → response.json() → body`。`mock_post.return_value = response`保存的是对整个响应模拟对象的引用，没有读取它的`json.return_value`，也不会自动调用`.json()`。只有写成`mock_post.return_value = response.json.return_value`才相当于直接返回body；若body是普通字典，业务代码随后调用`response.raise_for_status()`就会失败，因为字典没有这个方法。上例是用于理解的独立片段，不代表新增或执行了仓库测试。
+
+**fixture与辅助函数的分工：**
+
+- `@pytest.fixture`把`mock_post(monkeypatch)`登记为测试准备函数。测试声明形参`mock_post`，pytest先准备它依赖的`monkeypatch`，执行fixture，再将`return post`得到的对象交给测试形参。默认每条测试案例独立准备，包括参数化展开的每一例。
+- `monkeypatch.setenv("DEEPSEEK_API_KEY", "offline-placeholder")`给当前测试进程设置虚构环境变量，业务函数才能按原有方式读取它；占位字符串不能用于真实认证。
+- `monkeypatch.setattr(deepseek_demo.requests, "post", post)`替换业务函数实际查找的模块属性。`deepseek_demo.requests`引用的是共享的`requests`模块，不是独立副本；有效期内，其他代码通过同一模块的`post`属性调用也会受到影响。此前单独保存的原函数引用不会自动改指向Mock。
+- 替换从`setattr`执行后生效，持续到默认函数级`monkeypatch`清理时；不是调用一次就失效。正常测试清理会恢复方法和原环境变量状态，测试断言失败也会清理。这个fixture无需自己用`yield`恢复，因为恢复工作由`monkeypatch`负责。
+- `response_with_content(mock_post, content)`没有fixture装饰器，是普通辅助函数。测试显式传入两个实参并调用；其中的`mock_post`形参接收测试传进来的对象，不会再次自动触发fixture。它配置模拟响应，再返回`response`，方便测试随后检查响应方法有没有被调用。
+
+这里使用的`setenv(name, value, prepend=None)`与`delenv(name, raising=True)`都返回`None`；后者默认在变量不存在时抛`KeyError`。输入失败测试中，fixture已经设置了变量，所以`delenv("DEEPSEEK_API_KEY")`可以明确移除它。以上都是测试进程中的临时修改。参考：[pytest的monkeypatch方法及恢复机制](https://docs.pytest.org/en/stable/how-to/monkeypatch.html)。
+
+**用成功案例串起具体执行流程：**
+
+```text
+测试先用json.dumps把{"title": "  Read docs  ", "description": "  Session  "}
+转成JSON字符串，作为模拟回答content
+    ↓
+辅助函数把这个字符串放进外层choices/message/content字典
+    ↓
+测试调用真实generate_candidate("  Read docs  ")
+    ↓
+业务代码strip输入，读取虚构密钥，组装payload
+    ↓
+requests.post(...)实际调用mock_post，得到预先配置的response
+    ↓
+response.raise_for_status()调用子Mock，默认不会抛出HTTP错误
+    ↓
+response.json()直接返回预设外层字典
+    ↓
+真实业务代码取出content → json.loads得到任务字典
+    ↓
+TaskCandidate.model_validate清理标题、备注，补priority和tags默认值
+    ↓
+返回TaskCandidate对象 → 测试用model_dump检查完整字段
+```
+
+这里`json.dumps()`是“Python数据→JSON字符串”，`json.loads()`方向相反。外层`response.json()`已经被模拟，因此没有真正解析HTTP正文；内层`json.loads()`确实执行。默认的`response.raise_for_status()`只是子Mock被调用，不读取真实状态码；测试通过给该子Mock设置`side_effect`，专门模拟HTTP失败。
+
+**输入文字不必等于模拟回答中的title：**
+
+成功案例中两边碰巧都写了`"  Read docs  "`，不代表存在绑定关系。`generate_candidate(...)`的实参是用户输入，辅助函数中JSON的title是测试事先安排的模型输出。可以设想输入为`"帮我安排阅读数据库文档，重点理解Session"`，模拟回答为`{"title": "阅读数据库文档", "description": "理解Session"}`：业务函数负责转发输入，并解析这个预设回答；Mock不会理解输入并自动生成标题，也不会检查两段文字语义是否一致。
+
+检查请求内容时，应与清理后的用户输入比较；检查返回候选时，应与预设回答经过校验、清理、补默认值后的结果比较。改变输入不自动改变Mock响应，修改示例时需同步调整对应路径的断言。测试验证的是应用的传参、解析与校验，不是模型的语义理解能力。调用处的`"  Read docs  "`称为实参，函数定义中的`text`称为形参。
+
+**调用记录为什么能反映真实业务函数准备的参数：**
+
+`mock_post.call_args.kwargs["json"]`是读取调用记录的表达式，不是测试函数。fixture函数虽然也叫`mock_post`，但测试函数中的同名形参接收的是fixture返回的Mock对象，不是fixture函数本身。
+
+业务代码实际执行`requests.post(url, headers=headers, json=payload, timeout=(10, 20))`。只有`post`被替换，之前构造payload的真实代码仍然执行；Mock被调用时记录收到的实参，再返回预设response。因此，这里更准确的说法是“读取真实业务函数传给模拟请求方法的json参数”，没有真的通过网络发送它。
+
+| 表达式 | 本例中读到的内容 |
+| --- | --- |
+| `mock_post.call_args` | 最近一次调用记录 |
+| `.args` | 位置实参元组，本例含URL |
+| `.kwargs` | 关键字实参字典，含headers、json、timeout |
+| `.kwargs["json"]` | `json=payload`传入的payload字典 |
+
+继续取`payload["messages"][1]["content"]`，得到第二条user消息的文本`"Read docs"`。它与构造模拟回答的数据是两条不同的路径：前者检查“发出什么”，后者安排“收到什么”。
+
+**每类失败放在哪一层：**
+
+| 测试安排 | 具体触发点 | 要检查的行为 |
+| --- | --- | --- |
+| 删除虚构密钥，再传`None`、数字、空白或超长输入 | 类型、空白或长度检查 | 抛约定的输入异常；既不读缺失密钥，也不调用post |
+| `mock_post.side_effect = original` | 发送请求时 | 超时/连接错误转换为RuntimeError，保留原始原因 |
+| `response.raise_for_status.side_effect = original` | 检查HTTP状态时 | 转换HTTPError，之后不调用`response.json()` |
+| `response.json.side_effect = original` | 解析外层正文时 | 转换外层JSON错误 |
+| `response.json.return_value = {}`、`{"choices": []}`或`{"choices": None}` | 取回答结构时 | 分别覆盖KeyError、IndexError、TypeError的统一处理 |
+| content为`None`、数字、空串或纯空白 | 检查回答类型与内容时 | 拒绝无效回答；当前这些案例只断言RuntimeError类型 |
+| content为`"not JSON"` | 真实`json.loads()`执行时 | 报内层JSON错误，原因类型为`json.JSONDecodeError` |
+| 把`[]`、`None`、`{}`或错误字段字典先交给`json.dumps()` | 真实候选模型校验时 | 即使JSON语法合法，字段不合法仍转换为RuntimeError |
+
+例如`json.dumps(None)`得到合法JSON文本`"null"`，`json.loads()`会成功得到Python的`None`，之后才由候选模型拒绝。设计此类测试时先让前面步骤成功，只改变本例要检查的失败位置，才能知道错误确实来自目标步骤。
+
+**为什么非法输入测试故意删除密钥：**
+
+fixture先设置虚构密钥，测试再用`monkeypatch.delenv("DEEPSEEK_API_KEY")`将其移除。目的是让“输入不合法”和“密钥缺失”同时存在，检查函数是否先拒绝输入。`os.environ["DEEPSEEK_API_KEY"]`按键读取环境变量；键不存在时，像字典缺键一样抛KeyError。
+
+以`text=None, error_type=TypeError`这一组为例：
+
+```text
+正确顺序：检查None不是字符串 → 抛TypeError → pytest.raises(TypeError)接住
+         → 执行with外的assert_not_called()，确认没有请求
+
+错误顺序：先读缺失的密钥 → 抛KeyError → 来不及检查None
+         → pytest.raises(TypeError)不接受KeyError，用例失败
+```
+
+因此，“没有调用post”单独不足以证明逻辑正确：因为读密钥失败也不会调用post。本例同时检查预期输入异常和没有请求，验证应在依赖密钥之前拒绝非法输入。空串/纯空白/超长字符串的预期是ValueError，原理相同。异常类型不匹配时，异常继续传播，后面的普通断言不会执行；不是出现任意异常就通过。
+
+后续密钥读取已改为getenv及显式空值检查；上面的KeyError描述保留初版语境。当前若错误地先检查缺失密钥，会抛RuntimeError，而非预期的输入TypeError/ValueError，所以原测试仍能发现顺序错误。新增配置测试使用合法输入，分别检查密钥缺失、空串、纯空白均在post前拒绝，以及虚构合法密钥清理后正确构造Authorization。
+
+**requests异常类、异常对象与真正抛出异常：**
+
+这里是`requests.Timeout(...)`，不是`response.Timeout(...)`。`requests`是导入的HTTP库，`response`是某次调用得到的响应对象，二者职责不同。`requests.Timeout`、`requests.ConnectionError`和`requests.HTTPError`是该库的异常类；调用异常类创建异常对象，括号中的字符串是错误说明。例如`"timeout"`不是超时秒数，可以换成`"等待模型服务响应超时"`。
+
+```python
+original = requests.Timeout("timeout")  # 创建对象，程序还会继续执行。
+mock_post.side_effect = original        # 配置规则，此时也没有抛出。
+# 随后业务代码调用mock_post(...)，Mock才抛出original。
+```
+
+这和`error = ValueError("输入不合法")`再`raise error`的区别一样：创建对象与抛出异常是两个动作。`@pytest.mark.parametrize("original", [requests.Timeout("timeout"), requests.ConnectionError("connection")])`安排两次测试，分别把两个异常对象传给original；模拟超时无需真的联网等待。
+
+`requests.exceptions.JSONDecodeError("invalid", "<html>", 0)`的三个实参分别是错误说明、被解析文档、错误位置；这里同样只是创建供Mock抛出的异常，不是真的运行JSON解析器。`side_effect`的调用效果和断言方法见通用Mock补充；原始请求异常为什么最终匹配RuntimeError，以及`caught.value.__cause__`的检查，见本文“使用pytest.raises验证预期异常”的增量说明。
+
+本文件最初有9个测试函数，参数化后为`1 + 5 + 2 + 1 + 1 + 3 + 4 + 1 + 7 = 25`条案例。2026-10-22导师实际运行得到`25 passed`。2026-10-23先仅归档讲解，随后在标签去重验收轮次新增两项参数化测试共6例，本文件实际结果更新为`31 passed`。不能把它与旧完整回归129例直接相加，声称最新完整套件已经全部通过。
+
+#### 候选标签与保存规则保持一致（2026-10-23离线验收通过）
+
+现有`TaskService.create_task()`会对标签去首尾空白、转小写、拒绝空标签、保留首次出现顺序去重。不能把“字段是字符串列表”等同于“标签符合保存规则”。例如`[" Python ", "SQL", "python"]`应成为`["python", "sql"]`；`["Python", "   "]`应在交给用户确认前被拒绝。
+
+2026-10-23首次归档时，学习者已添加`@field_validator("tags", mode="after")`及normalize_tags，实现strip、lower、空标签拒绝。随后学习者补充`if cleaned_tag not in cleaned_tags:`，仅第一次出现时append，实现保序去重；导师新增6例并运行本文件31 passed，确认两种重复顺序、空列表及三种空标签场景。类定义时装饰器登记规则，调用`model_validate()`才执行；after接收经过字段基础校验的列表，必须返回最终列表供模型保存。省略tags时的默认空列表本身合法，不依赖默认值自动执行验证器。参考：[Pydantic字段验证器](https://docs.pydantic.dev/latest/concepts/validators/)。
+
+**自定义ValueError如何成为ValidationError，再成为RuntimeError：**
+
+当前验证器的相关逻辑是：
+
+```python
+for tag in tags:
+    cleaned_tag = tag.strip().lower()
+    if not cleaned_tag:
+        raise ValueError("tags must not be empty")
+    if cleaned_tag not in cleaned_tags:
+        cleaned_tags.append(cleaned_tag)
+return cleaned_tags
+```
+
+用`candidate = {"title": "学习 Python", "tags": [""]}`串起流程：
+
+1. 业务函数调用`TaskCandidate.model_validate(candidate)`，Pydantic按模型规则检查数据。
+2. tags是列表，内部的空串也是字符串，因此仅`list[str]`类型检查无法拒绝它；基础校验后进入after验证器。
+3. normalize_tags收到`[""]`，本轮tag为`""`，strip/lower后仍是`""`，`if not cleaned_tag`成立。
+4. 验证器执行`raise ValueError("tags must not be empty")`。本次验证器调用立即中断，不会append该标签，也不会执行末尾return。
+5. Pydantic捕获这个校验用的ValueError，把字段位置tags、错误原因、相关输入等整理进ValidationError，并由model_validate向调用者抛出。赋值右侧失败，因此没有正常返回或赋值一个可用的validated_candidate。
+6. generate_candidate中的`except ValidationError as error`捕获它，再执行`raise RuntimeError("模型候选任务字段不合法") from error`。
+7. 外层测试捕获RuntimeError，其直接原因`caught.value.__cause__`是ValidationError。
+
+```text
+normalize_tags              Pydantic校验入口             generate_candidate
+raise ValueError       →   报告ValidationError       →   raise RuntimeError
+发现某个标签不合法          整理模型字段错误               对外报告候选生成失败
+```
+
+可以把验证器理解为“标签检查员”，Pydantic是组织整份数据检查并整理错误报告的人。这不是原ValueError对象就地改变类型，也不是Python自动转换所有ValueError；转换发生在Pydantic调用验证器的校验流程里。直接调用`TaskCandidate.normalize_tags([""])`绕过model_validate时，仍会直接抛出ValueError。
+
+“汇总”不要求至少两个错误：只有一个错误也报告ValidationError。若title为空且tags含空标签，Pydantic可把标题长度错误和标签错误一起放进同一个ValidationError。但单个验证器抛出异常后不会回到循环继续检查后续标签。允许`tags=[]`，因为循环执行零次后返回空列表；拒绝的是`tags=[""]`这类含空内容元素的列表。
+
+边界纠正：`test_invalid_candidate_fields`最后一组是`{"title": "test", "description": "x" * 501}`，由`Field(max_length=500)`内置规则拒绝，不是normalize_tags主动抛ValueError。自定义空标签检查和内置长度限制都会由model_validate对外报告ValidationError，但来源不同。最初归档时测试文件尚未包含空标签案例；随后2026-10-23验收新增`test_candidate_blank_tags_are_rejected_before_confirmation`，以三组标签验证上述异常链，并检查原因为ValidationError及包含自定义空标签消息。
+
+参考：[Pydantic如何收集验证器错误及多个字段错误](https://docs.pydantic.dev/latest/errors/errors/)。
+
+#### 正式模块复用与PyCharm导入提示（2026-10-23）
+
+正式代码由根目录task_candidate.py定义TaskCandidate，由llm_service.py定义generate_candidate。examples/llm/deepseek_demo.py通过`from llm_service import generate_candidate`复用生成函数，仅在`if __name__ == "__main__":`中调用示例和打印。读取密钥和发送请求留在函数内部，导入模块不会调用模型。从项目根目录运行`python -m examples.llm.deepseek_demo`才会执行演示入口并请求真实服务。
+
+旧路径examples/llm/task_candidate.py保留一行`from task_candidate import TaskCandidate`，让旧路径继续提供正式类，称为重新导出（re-export）。它不会复制类，也不创建模型实例。若导入后又写`class TaskCandidate(...)`，后面的定义会覆盖当前模块中的同名绑定，重新变成两份类定义。迁移函数也一样：导入函数后不再保留另一份同名def。
+
+本轮在独立进程移除密钥、Mock阻止HTTP，确认演示函数与正式函数、旧路径模型与根目录模型分别是同一个对象，导入不请求。既有31例改为直接验证llm_service，并实际通过；业务模块迁移后测试替换的位置也需与真实查找位置一致。
+
+编辑器诊断需区分三项设置：
+
+| 设置或文件 | 作用 |
+| --- | --- |
+| Python解释器 | 指定使用哪个Python和已安装依赖；本项目复用D:/Python/Project/.venv/Scripts/python.exe |
+| 源码根目录 | 告诉PyCharm从哪里解析项目模块；本项目根为D:/Python/Project/Task_Managers_2 |
+| examples/llm/__init__.py | 将llm明确标记为普通Python包，可为空文件 |
+
+本次观察到：PyCharm在旧模型文件中将绝对导入错误解析为该文件自身，提示“导入解析为其包含文件”；而从项目根目录执行Python时正确取得根目录模型。单独打开项目和设置源码根目录后提示仍存在；学习者添加llm/__init__.py后，截图中红色错误消失、解析目标变为根目录task_candidate。Python也支持没有__init__.py的命名空间包，所以不能笼统说所有没有该文件的目录都不能导入。这个排查结果针对当前项目与编辑器环境，不代表所有导入错误都应通过添加该文件修复。
+
+随后出现的黄色“未使用的import”是另一种提示：当前文件没有直接使用导入名称，但作为兼容模块，它有意将名称提供给其他调用者，因此保留该导入有用途。可选地添加`__all__ = ["TaskCandidate"]`声明导出名称；它影响星号导入的名称选择，也可帮助编辑器识别有意的重新导出，但不创建类、不运行校验，也不是修复此前自导入问题的必要步骤。当前文件仍仅保留一条导入，未要求必须加入__all__。
+
+验证编辑器解析时，可Ctrl点击导入语句中的模块名，检查是否跳到根目录完整模型；运行验证则检查实际模块路径和对象身份。两种检查关注不同层面，不能相互替代。不要因兼容文件显示未使用导入就自动优化删除它。
+
+参考：[PyCharm源码根目录](https://www.jetbrains.com/help/pycharm/content-root.html)、[PyCharm包与目录](https://www.jetbrains.com/help/pycharm/populating-projects.html)。
+
+#### 请求消息与两层JSON解析
+
+system消息放应用的提取规则与输出样例，user消息放本次用户输入；两者均为messages列表中的role/content字典。多行提示词可用Python三引号字符串组织。system规则指导模型，不取代程序校验。当前示例从“高优先级学习SQLAlchemy，重点理解Session，标签是Python”提取title/priority/tags/description，不生成id/done/created_at；用户截图确认模型已按预期输出候选文本，未写数据库。
+
+payload中的response_format={"type":"json_object"}约束模型回答message.content采用JSON对象文本，不是把整个HTTP响应变成JSON；正常外层API响应本来就是JSON。官方要求提示中包含json字样并给输出样例，仍需处理空content、截断或其他异常。JSON模式不保证字段齐全、优先级合法或与用户原意一致。
+
+两层解析的具体值：HTTP外层可包含`"content":"{\"title\":\"学习SQLAlchemy\"}"`，content本身是字符串。response.json()把外层JSON解析为带choices的Python字典，不递归尝试把字符串内容也解析成对象。answer=response_data["choices"][0]["message"]["content"]取出`'{"title":"学习SQLAlchemy"}'`字符串，json.loads(answer)才得到带title的任务字典。print(answer)不显示字符串外层引号，所以看起来像字典；应结合type判断。json.loads来自标准库json，非法JSON抛JSONDecodeError；JSON顶层类型决定返回类型，不保证总是dict。
+
+随后TaskCandidate.model_validate(candidate)负责字段校验，是第三个不同职责：response_format要求回答形式，response.json解析外层，json.loads解析回答，Pydantic检查任务规则。候选模型已实现标题1～100、备注最多500、清理字符串空白、priority限定小写low/normal/high、标签默认独立空列表。ConfigDict(extra="forbid")拒绝未声明字段，避免模型擅自加入id等。Literal固定值的既有讲解见本文对应章节；它不会自动将HIGH转小写。候选模型不导入路由和数据库，离线可验证；标签业务规则仍待补齐。
+
+参考：[DeepSeek JSON输出要求](https://api-docs.deepseek.com/zh-cn/guides/json_mode/)。
+
+#### 调用环境与真实请求
+
+2026-10-23闭环导学补充：用户查看候选后可直接接受或修改title、priority、tags、description。点击“确认保存”应将最终四字段提交POST /tasks，复用既有校验、Service和Repository；不是再次调用模型。只有“重新生成”才再次调用POST /ai/task-candidate，重新生成可能改变用户刚刚修改的内容，也会再次产生模型调用。当前用Swagger手动操作两个接口，还没有实现前端确认按钮或自动保存。
+
+本机8001候选接口已由用户实际执行并截图返回200，得到学习SQLAlchemy/high/[python]/重点理解Session。该结果证明这一候选调用成功，不证明数据库连通、迁移已更新或任务已保存。保存前需核对运行服务的数据库主机与名称，再以alembic current查询同一配置目标的迁移版本；current查询版本，upgrade才执行迁移，二者职责不同。
+
+环境变量由当前终端及其新启动的子进程使用：换一个终端可能读不到此前设置的临时变量；Ctrl+C正常停止自己启动的Uvicorn不会清空父PowerShell的变量。检查bool(os.getenv(..., '').strip())只显示是否存在非空值，不打印凭据，也不能证明密钥或密码有效。正式app导入任务路由时仍需数据库密码配置，但只调用候选接口不会因此自动查询数据库。用户本轮确认本机目标为localhost/task_manager_learning；不要与测试库或容器库混淆。
+
+当前闭环目标是自然语言→模型解析→程序校验候选任务→用户确认→现有POST /tasks保存。解析成功本身不创建数据库记录。用户已有官方开放平台密钥，在当前PowerShell用Read-Host -AsSecureString输入，再转为当前进程的DEEPSEEK_API_KEY环境变量；输入隐藏不等于环境变量加密，不能打印密钥或headers。子进程Python可继承变量，新终端需重新配置。python -c执行直接提供的代码，-m运行模块，python script.py运行脚本；bool(os.environ.get(...))仅确认非空，不证明密钥有效。
+
+examples/llm/deepseek_demo.py使用现有requests依赖，读取环境变量并构造url、headers、payload。官方地址https://api.deepseek.com/chat/completions；Authorization头格式Bearer加空格及密钥。messages是role/content字典列表，user表示用户消息；model指定API模型标识，stream=False等待非流式结果。2026-10-22官方文档将deepseek-flash对应到DeepSeek-V4.1-Flash-1017，也列出deepseek-v4-pro；API别名不是永久锁定版本。准备字典不发送请求，requests.post才发生真实调用与可能计费。
+
+requests.post(url, headers=headers, json=payload, timeout=(10,120))返回Response；json参数序列化字典并设置JSON内容类型。timeout默认不设，元组分别限制连接和读取等待，不是整次调用总时长。当前学习者实际脚本使用(10,20)，即读取等待20秒，已成功不代表以后都不会超时。raise_for_status无参，4xx/5xx抛HTTPError，正常返回None；response.json解析正文，不证明HTTP成功，非法JSON可抛解析异常。response_data["choices"][0]["message"]["content"]依次取选项列表、首个选项、消息、回答文本。网络故障可能在post就抛异常；首版未封装错误处理，后续已按本章“输入与异常按阶段处理”完成封装，仍不连接任务数据库。
+
+用户截图确认首次真实调用已返回数据库事务解释；这是用户执行证据，助手未使用密钥或调用付费API。参考：[DeepSeek首次调用](https://api-docs.deepseek.com/zh-cn/)、[Requests快速入门](https://requests.readthedocs.io/en/latest/user/quickstart/)。
+
 > 2026-10-09路径调整：文中早期数据库实验文件名保留不变，Psycopg脚本现位于`examples/database/psycopg/`，SQLAlchemy和ORM脚本位于`examples/database/sqlalchemy/`。旧示例中的直接脚本运行命令请改用[数据库实验运行说明](examples/database/README.md)中的模块方式；公共`database.py`、`orm_models.py`和`database_api_demo.py`仍在根目录。
 
 ## SQLAlchemy：`Base.metadata`与数据库表结构（2026-10-14）
@@ -492,6 +780,47 @@ engine.dispose(close=True)针对当前Engine的连接池，不处理其他Engine
 
 Mock()是构造Mock类实例，repository只是变量名，不会推断或转换成TaskRepository。普通Mock访问尚不存在的普通属性时可生成子Mock；repository.get_by_id.return_value = task配置该模拟方法调用时返回task，不查询数据库。TaskService构造参数的类型注解不自动强制运行时类型检查，因此可接收能响应所需调用的模拟对象。assert_not_called()检查对应模拟方法从未被调用。Mock(spec=TaskRepository)可限制按参照对象允许的属性，但仍是模拟对象，不执行真实Repository逻辑。
 
+2026-10-23结合候选生成测试补充：Mock记录自身被调用的次数与参数，也允许配置调用结果。配置语句不等于调用；必须等被测程序真正执行对应方法，才产生相应调用记录或异常。
+
+| 写法 | 含义 |
+| --- | --- |
+| `mock.return_value = value` | 没有其他覆盖行为时，调用Mock返回value |
+| `mock.side_effect = error` | 此处error为异常对象；每次调用Mock时抛出它，不正常返回return_value |
+| `mock.call_args` | 最近一次调用的记录；从未调用时是None |
+| `mock.call_args.args` | 最近调用的位置实参元组 |
+| `mock.call_args.kwargs` | 最近调用的关键字实参字典 |
+| `mock.assert_called_once()` | 只要求恰好调用一次，不限制实参 |
+| `mock.assert_called_once_with()` | 要求恰好调用一次，而且这次没有传任何实参 |
+| `mock.assert_called_once_with(value)` | 要求恰好调用一次，且实参与给定value匹配 |
+| `mock.assert_not_called()` | 要求从未调用 |
+
+这些断言方法成功返回None，失败抛AssertionError，因此直接调用，不写`assert mock.assert_called_once()`。普通Mock的方法属性可以是子Mock：`response.json.return_value = body`配置的是`response.json()`的返回值；`response.json = body`则会把该方法属性直接换成body，无法起到相同作用。
+
+**assert_called_once_with的具体执行过程：**
+
+```python
+fake_function = Mock()
+fake_function("Read docs", priority="high")  # 真正调用，并记录这次实参。
+fake_function.assert_called_once_with(
+    "Read docs", priority="high",
+)  # 对照记录检查“恰好一次，且参数符合预期”；不会再次调用fake_function。
+```
+
+调用处的参数是实际输入，断言处的参数是预期输入；把断言中的priority改成`"low"`会失败。对于当前这种普通、未绑定签名的Mock，按记录中的位置实参和关键字实参检查，不把断言参数当作第二次调用的输入。
+
+当前业务代码使用`response.raise_for_status()`，所以测试写`response.raise_for_status.assert_called_once_with()`：要求该子Mock被调用一次，且没有任何实参。空括号不表示忽略参数。
+
+| 各独立场景中的实际调用 | 无参数的assert_called_once_with()结果 |
+| --- | --- |
+| 从未调用 | 失败：次数为0 |
+| 调用一次`raise_for_status()` | 通过：一次且无参数 |
+| 调用两次`raise_for_status()` | 失败：次数为2 |
+| 调用一次`raise_for_status(123)` | 失败：参数不匹配 |
+
+因此漏掉状态检查时，该断言会因次数为0失败。它检查“程序有没有调用这一步”，不说明Mock真的检查了HTTP状态码；模拟HTTP失败需要另给该子Mock设置side_effect。若只关心次数，使用assert_called_once()。
+
+`side_effect`还支持函数或可迭代对象，本轮只使用“异常对象”形式；不要把它理解为只能执行一次的开关。完整双Mock执行链见阶段五的离线测试章节。参考：[Mock返回值、异常模拟与调用断言](https://docs.python.org/3/library/unittest.mock.html#the-mock-class)。
+
 直接Service测试不请求description_client，因此不创建内存库；TaskRecord仅是未保存的对象。Mock返回该对象，真实Service对非法值抛ValueError，随后检查对象未修改、add_task及标签查询未调用。创建分支中的原对象未被使用，故对象不变断言的主要意义在更新分支；更新本来不调用add_task，不能单凭未调用add_task证明更新安全。参考：[Python Mock文档](https://docs.python.org/3/library/unittest.mock.html#the-mock-class)。
 
 2026-10-21备注实现补充：在SELECT中，`description = '' AS description_is_empty`先比较该行备注是否等于空字符串，再用AS为结果列起别名；不是赋值，也不新增或保存字段。空串得到true，非空文本或纯空格得到false，NULL比较得到NULL；检查NULL应使用IS NULL。
@@ -614,6 +943,18 @@ CURRENT_TIMESTAMP由PostgreSQL在数据库侧求值，表示当前事务开始�
 2026-10-15验收依据：迁移文件经助手静态审查；用户文字确认测试库旧数据/新数据时间验证、current/check、仅回退第二版后任务保留，以及再次升级/check和非空时间均符合预期。此为手动验证，不是新增自动化测试或完整pytest；原库第二版升级尚未完成。
 
 ### 选择测试数据库与首次在线迁移
+
+2026-10-23补充：**HOST找服务器，NAME选数据库**。TASK_MANAGER_DB_HOST传给URL.create的host参数，TASK_MANAGER_DB_NAME传给database参数。可以把服务器比作一栋楼，HOST是楼的地址，NAME是房间名称；同一PostgreSQL服务可管理多个数据库，每个库有独立的tasks表、数据和迁移版本。
+
+| 场景 | HOST | NAME |
+| --- | --- | --- |
+| Windows学习API | localhost | task_manager_learning |
+| Windows数据库回归 | localhost | task_manager_migration_test |
+| Compose内API连接数据库服务 | db | task_manager_container |
+
+localhost相对于程序运行环境：Windows中的Python使用它指本机，API容器中使用它指该容器自身；db是Compose网络中可解析的服务名，不是数据库名。port=5432指定服务端口，username/password用于身份认证。学习库和测试库之间切换通常只改变NAME，HOST不变。
+
+设置环境变量不会创建数据库、搬运数据或改变已运行服务的连接；后续新启动的Python继承并读取配置。恢复NAME为task_manager_learning只证明配置恢复，不能据此判断此前完整测试是否执行或通过。
 
 测试目标是在独立空库验证“升级→回退→再次升级”，避免对原库已有表重复建表或删除练习数据。database.py使用`database=os.getenv("TASK_MANAGER_DB_NAME", "task_manager_learning")`选择目标。os.getenv(key, default=None)读取环境变量；存在时返回字符串，不存在时返回default，不创建数据库或连接。设置为空字符串也属于存在，不会使用默认值。密码使用os.environ[...]，缺失时抛KeyError，与数据库名允许默认值的策略不同。
 
@@ -1212,6 +1553,17 @@ docker compose stop正常停止项目服务而不删除容器、网络或卷；�
 参考：[Docker概览](https://docs.docker.com/get-started/docker-overview/)、[容器](https://docs.docker.com/get-started/docker-concepts/the-basics/what-is-a-container/)、[Compose](https://docs.docker.com/get-started/docker-concepts/the-basics/what-is-docker-compose/)、[数据卷](https://docs.docker.com/engine/storage/volumes/)、[Windows安装](https://docs.docker.com/desktop/setup/install/windows-install/)、[运行容器](https://docs.docker.com/reference/cli/docker/container/run/)、[官方中文界面需求](https://github.com/docker/roadmap/issues/543)。
 
 ## pytest共享fixture：`conftest.py`
+
+2026-10-23补充`--noconftest`：加此选项表示不加载conftest.py；不加则按目录规则加载相关文件并注册fixture。测试文件自身定义的fixture和pytest内置的monkeypatch仍可使用，因此自带mock_post、mock_generate、ai_client的两个AI测试文件可以独立运行。
+
+当前tests/conftest.py提供database_session、task_client、database_client。完整回归的测试请求task_client时，pytest先准备database_session，建立连接与外层事务，再让API使用测试会话，最后回滚并关闭连接。如果用--noconftest跳过这些定义，需要它们的测试通常会报fixture 'task_client' not found，这是测试准备失败，不等于业务断言失败。
+
+| 运行方式 | 是否加载conftest.py | 本项目用途 |
+| --- | --- | --- |
+| `python -m pytest -q` | 是 | 在专用数据库运行完整回归 |
+| `python -m pytest --noconftest tests/test_deepseek_demo.py tests/test_ai_routes.py -q` | 否 | 两个自带fixture的AI离线测试文件 |
+
+加载conftest.py会执行顶层导入，但不会立即执行所有fixture。当前导入database会读取密码配置；被请求的数据库fixture才真正建立连接。--noconftest不是禁用网络或数据库的安全开关，测试文件自行请求时它不会阻止；离线保障来自Mock和测试设计。`-p no:cacheprovider`单独控制禁用pytest缓存插件，不负责fixture加载。
 
 `conftest.py`是pytest自动加载的本地测试配置文件，可以集中定义多个测试模块需要的fixture。测试通过函数参数请求fixture，不需要`from conftest import ...`。pytest从测试所在模块和目录逐步向上寻找可用fixture；上级目录的fixture可供下级测试使用，兄弟目录专属fixture不会自动互相可见。
 
@@ -6547,9 +6899,9 @@ with pytest.raises(ValueError):
 
 | 被测代码结果 | pytest结果 |
 | --- | --- |
-| 抛出预期的`ValueError` | 该异常断言通过 |
+| 抛出预期的`ValueError`或其子类 | 该异常断言通过 |
 | 没有抛出异常 | 测试失败，提示没有抛出预期异常 |
-| 抛出其他异常类型 | 其他异常继续传播，测试失败 |
+| 抛出不属于预期类型及其子类的异常 | 异常继续传播，测试失败 |
 
 只有可能抛出异常的语句应放入`with`块，后续普通断言放在块外，避免过大的代码范围意外吞掉同类型异常。
 
@@ -6593,6 +6945,33 @@ assert str(exception_info.value) == "Task title cannot be empty"
 | `exception_info` | pytest提供的异常信息包装对象 |
 | `exception_info.value` | 实际捕获的异常对象 |
 | `str(exception_info.value)` | 异常消息 |
+
+2026-10-23结合候选生成测试补充异常原因检查：
+
+```python
+with pytest.raises(RuntimeError, match="模型服务请求失败") as caught:
+    deepseek_demo.generate_candidate("test")
+
+assert caught.value.__cause__ is original
+```
+
+`caught`是pytest的ExceptionInfo包装对象，`caught.value`才是捕获到的RuntimeError。业务代码`raise RuntimeError(...) from error`把原异常记录为`__cause__`；`is original`进一步确认保留的是测试预先创建的同一个异常对象。当原异常由真实`json.loads()`或Pydantic内部产生、测试没有预先保存它时，本文件用`isinstance(caught.value.__cause__, json.JSONDecodeError)`或ValidationError检查类型。
+
+**预设Timeout或ConnectionError，为何却断言RuntimeError：**
+
+Timeout和ConnectionError都属于requests.RequestException的子类，不属于RuntimeError。它们不会直接与`pytest.raises(RuntimeError)`匹配。测试包住的是整个generate_candidate调用；该函数内部还有一层异常处理：
+
+```python
+try:
+    response = requests.post(url, headers=headers, json=payload, timeout=(10, 20))
+    response.raise_for_status()
+except requests.RequestException as error:
+    raise RuntimeError("模型服务请求失败") from error
+```
+
+执行链是`模拟post抛Timeout → 业务except捕获Timeout → 新建并抛RuntimeError → 测试捕获RuntimeError`；换成ConnectionError同理。原始异常对象没有被改成新类型，而是作为新异常的__cause__保留。如果业务函数没有这段转换，原始请求异常就会直接传到测试，因与RuntimeError不匹配而失败。测试因此同时验证“对外提供统一错误”与“保留内部故障原因”。
+
+`match`依旧是对异常消息进行正则搜索，不是检查cause；只写`pytest.raises(RuntimeError)`也不会自动检查错误说明。捕获预期异常后执行的是with块外的断言，不会恢复已经被异常中断的业务函数。`is`与`isinstance`的详细区别参见后文既有对象比较内容。
 
 当前Service测试把`pytest.raises()`与参数化组合，一套测试逻辑分别验证三类业务错误。每组参数仍是一条独立测试，并分别获得独立的数据库fixture和回滚过程。
 

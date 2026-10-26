@@ -4,6 +4,133 @@
 
 ### 从自然语言到候选任务：消息、格式与校验
 
+#### 模型上下文与Token入门（2026-10-24）
+
+上下文是本次请求交给模型的材料。当前llm_service每次只构造system规则及本次user输入，没有自动携带上一轮回答、用户修改或数据库记录。任务保存在PostgreSQL不代表模型能自动读取。用户说“把刚才那条改成高优先级”时，程序必须提供明确的目标及相关信息；如果用户已修改候选，应优先依据当前保存状态，而不是旧模型回答。提供上下文与执行数据库更新是不同职责。
+
+Token是分词器将文本编码后使用的处理单位，不固定等于一个汉字、一个英文单词或一个字符。Python的len(text)与Field(max_length=2000)限制字符长度，不是模型Token数，也不是模型上下文窗口大小。system规则、样例、用户输入及提供的历史信息都可能计入输入用量，不能只数用户一句话。实际Token数以服务返回的usage为准，不使用固定换算保证上限。
+
+外层HTTP响应中的usage与choices同级：prompt_tokens为输入Token数，completion_tokens为生成Token数，total_tokens为两者总数。思考模型的生成用量可能包含推理部分，不能只数最终content的可见文字。本轮只讲字段位置，不改变generate_candidate返回TaskCandidate的契约，不增加真实模型调用或安装分词器。
+
+示意数字而非真实调用结果：usage={"prompt_tokens": 180, "completion_tokens": 60, "total_tokens": 240}。增加system说明即使user文本不变，也可能增加输入用量。上下文窗口是模型能处理的上下文容量限制；max_tokens用于限制生成Token数量，均不同于应用2000字符输入限制。具体模型上限及价格留到实际配置时核对，不在本轮硬编码。
+
+参考：[DeepSeek Token用量](https://api-docs.deepseek.com/zh-cn/quick_start/token_usage/)、[Chat Completions响应字段](https://api-docs.deepseek.com/zh-cn/api/create-chat-completion/)，2026-10-24核对。
+
+2026-10-24真实观察：用户截图显示输入186、生成141、总量327，其中推理116包含在生成141内，非推理生成部分为25，不能再把116加到327上。缓存命中0、未命中186；本轮只识别数据，不展开缓存定价。用字典get("usage")取值，缺键默认None而非0；在成功校验后临时print不会改变函数返回的候选对象。临时输出用于教学，观察完成后应移除，不输出密钥或完整响应。
+
+#### 输出预算与结束原因（2026-10-24）
+
+max_tokens是请求payload中与model/messages同级的生成上限，不是必须生成的数量，不限制用户输入字符数，也不表示请求超时秒数。当前思考模型的推理部分占用生成预算；一次观察到生成141不代表以后都只需141。512此前只是讲解示例，并未要求写入程序。
+
+每个choices元素中的finish_reason与message同级。stop表示自然结束或命中指定停止序列；length表示达到生成Token或上下文长度限制，回答可能被截断。当前单条候选业务只接受stop，其他值统一抛RuntimeError("模型回答未正常完成")；缺少该字段由已有结构异常处理转换，并保留KeyError原因。stop也不保证JSON或字段正确，因此后续校验仍必须保留。
+
+执行链为外层JSON解析→提取finish_reason及content→检查结束原因→回答类型和非空检查→内层json.loads→TaskCandidate.model_validate。即使length的content碰巧是合法JSON也拒绝，不能只靠JSON解析判断生成是否完成。响应HTTP200只说明请求在HTTP层面成功，不取代结束原因及内容校验。本业务抛出的RuntimeError仍由路由转换为固定502提示，不自动重试。
+
+导师将测试辅助函数response_with_content增加finish_reason="stop"默认参数，让既有正常假响应符合当前协议；显式传非stop模拟中断。新增7个非stop值的拒绝案例、1个截断时json.loads未调用的案例、1个缺字段结构错误案例，两个离线文件实际64 passed。更新模拟数据是因为业务新增了字段要求，不能把旧Mock缺字段造成的失败误判为业务实现错误。
+
+2026-10-24已配置初始教学预算max_tokens=2048，并通过离线测试确认请求传参。这是本项目的起始配置选择，不是模型能力上限或完整回答保证；本轮未发送真实请求验证完成率。需要结合实际用量和length失败情况调整；先具备中断拒绝机制，再设上限。参考：[DeepSeek max_tokens与finish_reason](https://api-docs.deepseek.com/zh-cn/api/create-chat-completion/)。
+
+#### 同步调用、线程池与函数执行（2026-10-25）
+
+函数用于组织代码，线程负责执行代码。普通函数调用不会因为进入另一文件或函数就自动创建线程。当前FastAPI将普通def候选路由安排到线程池执行；假设线程T1负责该路由，它直接调用llm_service.generate_candidate后，输入检查、requests.post、响应解析和候选校验也在T1执行。Service返回后，路由才将结果赋给candidate并返回；抛出异常时则进入相应异常处理。
+
+执行顺序：请求校验→线程T1执行路由→进入Service→requests.post等待响应→状态及内容校验→Service返回→路由返回。requests.post是同步阻塞调用，等待期间当前线程不能继续执行后续response.json。线程池提供可复用的工作线程，不是每调用一个函数就新建线程，也不是某个用户永久绑定一个线程。
+
+另一个请求B可以由线程T2处理，所以A等待模型时，B查询已有任务可能先完成。这称为并发处理，不意味着无限容量或保证B立即开始；线程池、数据库连接及其他资源均有限。阻塞当前线程不等于整个API停止，FastAPI也不会自动将所有普通工具函数单独放入线程池。
+
+异步等待导学：事件循环负责安排可运行的异步任务；任务A等待支持异步的网络操作时可以暂停，让同一事件循环线程运行其他就绪任务，结果可用后再继续A。A自身仍需取得结果后才能解析，不会提前执行依赖结果的语句。async def声明异步函数，await用于等待可等待对象；不是给任意同步调用加上await就能使其非阻塞。仅将当前路由改为async def、仍直接调用含requests.post的同步Service，会阻塞执行它的事件循环线程。本轮仅理解原理，未改造项目或引入异步HTTP客户端。
+
+参考：[FastAPI异步与线程池](https://fastapi.tiangolo.com/async/)。同步执行链已获学习者理解反馈；异步原理为本轮新导学，理解待确认。
+
+#### 协程对象、await与gather的分工（2026-10-25）
+
+调用async def函数会创建协程对象，单独创建不会运行函数体。例如request_a = simulate_request("A", 3)保存的是协程对象；result_a = await request_a开始执行并等待该协程完成，保存其return值。本实验return name，所以result_a是字符串"A"。两行可合并为result_a = await simulate_request("A", 3)，变量名不改变调度行为。直接await协程不自动新建线程。
+
+await要求当前流程取得结果后再执行下一行。协程内部await asyncio.sleep(delay)时会暂停当前任务，让事件循环运行其他就绪任务；sleep单位为秒、可用小数，默认返回None，不联网。外层main仍需等待simulate_request返回才完成赋值。异步等待不意味着当前任务跳过结果依赖，也不意味着每次await都必然发生任务切换。
+
+连续写await simulate_request("A", 3)和await simulate_request("B", 1)，B的调用在A完成后才执行，等待约4秒。gather同时接收这两个协程时会将它们安排为任务，等待可以重叠，B先结束，等待通常约3秒；await gather取得按传入顺序排列的返回值列表['A', 'B']，不是按完成顺序。gather负责组织并发，await负责等待结果；不能将“连续await新协程顺序执行”推广为“连续await已经调度的Task必然顺序执行”。gather默认传播异常，但不自动取消其他任务。
+
+独立脚本的asyncio.run(main())创建并管理事件循环，完成后清理并关闭循环，返回main的返回值（无显式return则为None）；同一线程已有事件循环运行时不能再次调用它。当前实验无需第三方依赖或模型密钥。参考：[Python协程与任务](https://docs.python.org/3/library/asyncio-task.html)、[运行器](https://docs.python.org/3/library/asyncio-runner.html)。
+
+#### 异步HTTP客户端与响应处理（2026-10-25）
+
+httpx.AsyncClient用于发送异步HTTP请求和管理连接。async with httpx.AsyncClient(timeout=10.0) as client创建并进入客户端使用范围，离开缩进块时执行异步清理，即使块内异常也关闭连接；创建客户端本身不发送请求。当前默认超时5秒，显式10.0配置网络操作超时，不是整个请求严格总时限。
+
+response = await client.get(url)等待网络请求及默认的响应体读取完成，得到httpx.Response对象。response.raise_for_status()、response.status_code和response.text处理已取得的响应，不用await；非2xx状态检查抛httpx.HTTPStatusError，网络错误可抛httpx.RequestError的子类。HTML网页用text，不调用json；普通非流式JSON响应的response.json()同样无需await。
+
+GET实验与模型POST的共同链路为创建客户端→等待请求→状态检查→使用响应→关闭连接。POST用await client.post(url, headers=headers, json=payload)，headers承载请求头，json把Python数据编码为请求JSON；不会自动解析服务返回的JSON。请求完成后仍要逐层解析、检查finish_reason及校验候选。HTTPX与requests的异常类型不同，迁移时不能只替换请求那一行。
+
+2026-10-25导师实际运行examples/async_http_demo.py成功，状态200及HTML正文，退出0；当时打印完整正文，2026-10-26源码核对已改为response.text[:80]。虚拟环境可导入httpx 0.28.1；原requirements仅声明httpx2，二者为不同包，异步迁移时已补httpx==0.28.1直接依赖。参考：[HTTPX异步客户端](https://www.python-httpx.org/async/)、[响应处理](https://www.python-httpx.org/quickstart/)。
+
+#### 异步迁移解决的问题与两条入口的数据流（2026-10-25）
+
+原实现普通def路由由FastAPI安排到工作线程，requests.post等待网络期间占用该线程；不是整个API都停止。异步迁移使等待网络期间当前任务可挂起，让事件循环处理其他就绪任务，不保证模型单次生成更快。调用链里的async def允许使用await，但不会自动等待内部函数；不为每个函数创建新线程。仅改async def而继续直接调用阻塞HTTP请求会阻塞事件循环。
+
+命令行python -m examples.llm.deepseek_demo定位模块，执行导入和函数定义，再进入__name__判断。main()创建协程对象，asyncio.run启动并管理事件循环来执行main；main中的candidate = await generate_candidate(text)等待Service最终返回TaskCandidate。历史错误：演示曾漏这一处await，实际得到协程对象并在访问candidate.title时报AttributeError；2026-10-25已修正且65项离线测试通过。asyncio.run不会自动深入函数查找并运行所有未await的协程。2026-10-26用户反馈真实命令行调用结果符合预期；记录为用户实测反馈，导师未重发模型请求。
+
+Service的具体数据流：自然语言字符串→strip及长度检查→读取并清理密钥→构造headers与payload字典→httpx.Timeout配置→async with AsyncClient→await client.post(url, headers=headers, json=payload)编码并发送请求→得到已读取响应体的Response→raise_for_status→退出上下文关闭连接→response.json()解析外层字典→提取finish_reason和content→检查stop→json.loads(content)得到任务字典→TaskCandidate.model_validate规范化字段→return候选对象。示例Python标签经模型校验变为python；标题、备注去首尾空白，禁止多余字段，优先级限制为low/normal/high。响应和候选保存在当前调用的局部变量中，流程不保存数据库。
+
+独立脚本收到候选后print(candidate.title)、print(candidate.model_dump())，后者是字典而非JSON文本；main完成后run清理事件循环。网页入口则由Uvicorn运行api.py中的app，api.py导入ai_router并include_router登记路由；装饰器与请求/响应模型此时登记规则，不调用模型。收到POST /ai/task-candidate的JSON后，FastAPI用TaskCandidateRequest验证，成功才进入异步路由；路由await同一个Service，得到候选后由response_model=TaskCandidate校验序列化为HTTP JSON。演示脚本不经过api.py/路由；HTTP请求不经过演示main，也不在路由里使用asyncio.run。
+
+异常流：HTTPX网络或状态异常→Service捕获httpx.HTTPError并raise RuntimeError from error→API路由转换固定HTTP502；独立脚本没有这层HTTP转换，异常传播至终端。输入请求校验失败则HTTP422且不调用Service。结构、结束原因、JSON及字段错误仍分别检查，异步改造不取消这些规则。requirements声明直接依赖，不是运行时入口，也不会因import自动安装包。
+
+离线测试对应三段链路：test_deepseek_demo模拟AsyncClient及其异步post，实际执行解析/校验；test_ai_routes用AsyncMock替代Service、执行真实路由；test_llm_demo_entrypoint用异步替身执行脚本入口。AsyncMock可被await并核对是否等待，Response的json/raise_for_status仍用普通Mock；测试通过不证明实网可达或模型真实回答质量。
+
+##### 回顾入口：从具体命令追踪同一份数据（2026-10-26补充）
+
+在项目根目录执行以下已有命令会真实调用模型，不是离线测试：
+
+```powershell
+& "D:\Python\Project\.venv\Scripts\python.exe" -m examples.llm.deepseek_demo
+```
+
+PowerShell的&执行指定Python；-m按模块定位examples/llm/deepseek_demo.py。导入与函数定义先准备好工具，入口判断成立后才执行asyncio.run(main())。文件分工与运行顺序如下：
+
+| 步骤与文件 | 实际语句或动作 | 当前数据及下一步 |
+| --- | --- | --- |
+| 1. examples/llm/deepseek_demo.py | asyncio.run(main()) | 创建并运行main协程，管理脚本的事件循环 |
+| 2. 同一文件的main | candidate = await generate_candidate(text) | text为“高优先级学习SQLAlchemy，重点理解Session，标签是Python。”，等待Service返回 |
+| 3. llm_service.py | 类型检查、strip、长度检查、读取密钥 | 输入合法后才构造请求；密钥进入headers，不进入候选字段 |
+| 4. llm_service.py | 构造payload | 原文放入messages中的user.content；system提供字段规则 |
+| 5. llm_service.py | Timeout及async with AsyncClient | 配置等待限制并管理连接资源，尚不等于已发送模型请求 |
+| 6. llm_service.py | response = await client.post(url, headers=headers, json=payload) | 编码请求JSON并发送；等待网络期间可暂停当前任务；完成后得到Response |
+| 7. llm_service.py | raise_for_status，然后退出async with | 检查HTTP状态并关闭客户端；非流式响应内容已读取，仍可解析 |
+| 8. llm_service.py | response.json()、提取content、json.loads(answer) | 外层字典→模型回答字符串→候选字段字典，分别检查结构和结束原因 |
+| 9. task_candidate.py | TaskCandidate.model_validate(candidate) | 根据类规则实际执行字段校验；例如Python标签规范为python |
+| 10. llm_service.py→演示main | return validated_candidate | main的await完成，candidate才成为TaskCandidate对象 |
+| 11. 演示main | print(candidate.title)、print(candidate.model_dump()) | 打印标题及Python字典；main结束后run清理事件循环 |
+
+示例数据转换（为解释构造，非要求模型逐字输出）：
+
+```text
+自然语言：高优先级学习SQLAlchemy，重点理解Session，标签是Python。
+    ↓ payload.messages中的user.content
+外层响应字典：{"choices": [{"finish_reason": "stop", "message": {"content": "..."}}]}
+    ↓ 提取content，得到字符串
+'{"title":"学习SQLAlchemy","priority":"high","tags":["Python"],"description":"重点理解Session"}'
+    ↓ json.loads，得到字典
+{"title": "学习SQLAlchemy", "priority": "high", "tags": ["Python"], "description": "重点理解Session"}
+    ↓ TaskCandidate.model_validate，得到模型对象
+TaskCandidate(title="学习SQLAlchemy", priority="high", tags=["python"], description="重点理解Session")
+```
+
+浏览器入口的前后两端不同，中间复用同一个Service：
+
+```text
+服务器启动：Uvicorn导入api.py → app.include_router(ai_router)登记规则
+实际请求：POST /ai/task-candidate，JSON为{"text": "上述原文"}
+    → TaskCandidateRequest检查请求体，失败则422
+    → ai_routes.generate_task_candidate(request)
+    → await llm_service.generate_candidate(request.text)
+    → 经过上表步骤3～9
+    → 路由return candidate
+    → FastAPI按response_model序列化为HTTP JSON，返回200
+```
+
+命令行直接调用Service，不经过路由；浏览器请求不经过演示main。api.py还导入任务路由，其依赖会在启动时读取数据库密码配置；这与候选请求实际不调用数据库是两件事。候选成功不代表任务已保存，人工确认后的POST /tasks才走任务Service/Repository的写库流程。
+
+复习异步变化时抓住两个位置：main/路由await Service，Service await网络请求。外层调用等最终候选，内层调用等HTTP响应；每一层都不能跳过结果依赖。Response解析、模型校验、打印无需await。requirements.txt记录直接依赖httpx，测试文件以替身验证各段调用，不属于正常请求的运行路径。
+
 #### 输入与异常按阶段处理
 
 generate_candidate在读取密钥和请求前检查text：非字符串抛TypeError，strip后为空或超过2000字符抛ValueError。2000是应用实验限制，不是模型上限。异常分类区分调用者输入错误与外部服务响应错误；例如用户输入空白是ValueError，模型返回空白属于RuntimeError，不能仅按“都是空字符串”使用同一类别。

@@ -1,10 +1,173 @@
 # 学习进度与阶段路线
 
-> 更新日期：2026-10-23。用户在专用测试库复核指引后反馈已测试并要求继续，按用户反馈进入提交审阅，未重跑或补写未提供的专用库计数/耗时。此前完整pytest截图为184 passed（当时使用学习库），导师AI两个文件离线55 passed。当前学习位置以第1节最新记录为准，后续阶段细节保留历史依据。项目使用说明见README.md，长期导师规则见AGENTS.md，详细知识笔记见get_knowledge.md。
+> 更新日期：2026-10-26。用户授权两次本地提交，功能提交47c9d19已完成，本记录随学习文档提交归档；未推送。完整回归依据为用户截图194 passed in 2.14s。下一小节为JSON Schema基础，尚未改变模型请求协议。当前学习位置以第1节最新记录为准，后续阶段细节保留历史依据。项目使用说明见README.md，长期导师规则见AGENTS.md，详细知识笔记见get_knowledge.md。
 
 ## 1. 当前继续位置
 
-### 2026-10-23：已授权本地提交，功能提交完成，学习记录随第二次提交归档
+### 2026-10-26：授权提交收尾，开始JSON Schema基础导学
+
+- 用户明确同意此前两次本地提交方案。功能提交47c9d19（feat: use async HTTP for AI task candidates）已完成，10个文件；PROGRESS.md与get_knowledge.md随本笔docs: record async workflow lessons and verification归档。未获远程推送授权，未推送；第二笔结果在执行后向用户报告。
+- 下一小步解释JSON格式与字段规则的区别，以及TaskCandidate模型可生成机器可读的JSON Schema。导师已在本机只读调用TaskCandidate.model_json_schema()，返回dict，含properties、required=['title']、priority.enum及additionalProperties=False；不请求模型或数据库。
+- 本轮仅介绍规则表示，不向模型新增schema请求参数、不承诺供应商支持某种严格输出模式。学习者先观察priority枚举与必填title，理解Schema描述规则、model_validate执行校验，两者不同；标签strip/lower/去重等自定义逻辑并未完整体现在自动生成Schema中。
+- 下一次按理解反馈介绍model_json_schema与model_dump的区别及字段映射，再决定局部实践。本轮无新业务修改或测试；最近知识归档点仍为2026-10-26调用流程整理，累计推进4轮，其中本轮JSON Schema首次导学待下一轮合并归档。
+
+### 2026-10-26：完整回归截图核验通过，待确认本地提交方案（历史记录）
+
+- 用户截图明确显示alembic current为7fd5a8884f29 (head)、python -m pytest -q结果194 passed in 2.14s，之后执行TASK_MANAGER_DB_NAME='task_manager_learning'。截图未包含测试前数据库名，结合上一轮专用库步骤记录，不宣称截图独立证明运行时目标库。导师未重复运行测试或访问数据库。
+- 已核对HEAD以来变更及未跟踪文件共12个；包含HTTPX异步Service/路由/演示、max_tokens与finish_reason保护、异步练习、3个测试文件及依赖和文档。学习者已将网页实验输出修正为前80字符。
+- 拟分两次本地提交：第一笔10文件（ai_routes.py、llm_service.py、requirements.txt、examples/llm/deepseek_demo.py、examples/async_demo.py、examples/async_http_demo.py、tests/test_deepseek_demo.py、tests/test_ai_routes.py、tests/test_llm_demo_entrypoint.py、README.md），消息feat: use async HTTP for AI task candidates；第二笔PROGRESS.md及get_knowledge.md，消息docs: record async workflow lessons and verification。
+- 尚未执行git add、commit或push。现有examples两个文件有暂存后继续修改的状态，提交时须明确纳入其最新内容，不能只提交旧暂存版本。等待用户对具体本地提交方案的明确授权，推送另行确认。
+- 自最近归档累计推进3轮，此轮为验收收尾，没有新增技术知识；修正知识文档中网页实验输出范围的历史状态。提交后再确定下一小步，不把测试通过等同独立重建掌握。
+
+### 2026-10-26：重启后API验收获确认，安排专用测试库完整回归（历史记录）
+
+- 用户按重启恢复步骤重新配置当前PowerShell环境、启动本机8001服务并反馈结果符合预期：合法候选请求200、空白请求422。记录依据用户反馈，不补写具体响应文本、耗时或用量；本轮导师未重发模型请求。
+- 已核对tests/conftest.py：数据库用例通过外层事务和create_savepoint隔离，结束关闭Session、回滚事务并关闭连接；仍使用专用task_manager_migration_test，避免学习库序列变化。
+- 下一步用户在自己运行Uvicorn的终端Ctrl+C停止服务，沿用该终端密码变量，将数据库名切为task_manager_migration_test，alembic current确认7fd5a8884f29 (head)后运行python -m pytest -q（不加--noconftest）。若连接/版本异常先反馈，不擅自重建数据库；测试后切回task_manager_learning。
+- 当前无本轮完整回归结果，待用户反馈pytest末行；之后整理变更进入提交审阅，未获新提交授权前不执行commit/push。
+- 自最近归档累计推进2轮（重启恢复及本轮），此轮复用已学命令，无新增知识归档。未改业务代码、运行测试或操作数据库。
+
+### 2026-10-26：真实命令行调用获用户确认，归档流程并推进API验收（历史记录）
+
+- 用户反馈已执行且结果符合预期，记录真实命令行模型调用通过（依据用户反馈，无新截图、导师未重发）。不推断模型精确措辞、耗时或用量，不视为数据库/API部署验收。
+- 用户明确要求归档之前的流程讲解。已检索并扩展get_knowledge.md原有异步迁移章节，增加具体PowerShell命令、逐文件语句/数据表、JSON各层转换、命令行与HTTP入口对照；修正旧的“仍缺await”表述为已修复历史问题，避免重复建章。
+- 下一步在具备模型密钥及项目数据库配置的终端运行最新api:app本机8001服务，通过/docs对POST /ai/task-candidate发一次合法请求，期望200及候选四字段；不提交POST /tasks。可再发空白text验证422，此路径不应调用模型。若已有自己启动的旧服务，先在其终端Ctrl+C退出再启动，不能终止未知进程。
+- 本轮未启动服务、执行测试、调用模型或操作数据库。最近归档点重置为本轮，累计推进归零；未提交推送。后续依据API结果安排回归收尾。
+
+### 2026-10-25：异步调用链离线验收通过，待真实模型调用（历史记录）
+
+- 已核对演示main中的candidate = await generate_candidate(...)补齐，入口仍为asyncio.run(main())。实际运行三个离线测试文件：65 passed in 1.44s；覆盖Service、路由及脚本入口，无真实模型调用或数据库操作，不等同完整项目回归或性能验证。
+- 已同步README中的HTTPX使用方式和三个文件离线命令。下一步学习者在已配置DEEPSEEK_API_KEY的终端执行python -m examples.llm.deepseek_demo一次；无需启动API或数据库，预期打印标题及候选四字段字典，无coroutine错误。输出措辞可以变化，不要求逐字相同。
+- 实网结果待用户反馈；此次会真实请求模型并产生相应用量，不要求重复生成或创建数据库任务。若失败提供异常类型和提示，不输出密钥。通过后再安排API入口验证及回归收尾。
+- 自最近归档累计推进1轮。未修改业务代码、提交或推送。
+
+### 2026-10-25：HTTP异常修正通过，补讲异步改造目的与跨文件数据流（历史记录）
+
+- 用户反馈对改动目的模糊，要求结合具体命令及所有相关文件详细讲解；本轮暂停新功能，围绕同一句自然语言分别追踪命令行入口与HTTP入口。
+- 实际核对Service已捕获httpx.HTTPError；演示main已async def，但candidate = generate_candidate(...)仍缺await。实际离线运行三个文件：1 failed, 64 passed in 1.80s，唯一失败为演示读取协程.title。无真实模型调用或数据库操作。
+- 讲解asyncio.run管理独立入口、await驱动Service及网络请求、AsyncClient生命周期、超时与异常转换、外层Response→dict→content字符串→dict→TaskCandidate、返回至脚本打印或FastAPI序列化。区分启动导入时登记路由/模型规则与收到请求后实际执行，不将本次候选生成说成数据库写入。
+- 已将本轮增量跨文件调用链与异步改造目的合并入知识文档；最近归档点更新为本轮，累计推进归零。测试源码适配已在上一轮完成，本轮未改业务或测试、未提交推送。
+- 下一步仅由学习者给演示Service调用补await并消化执行链，之后重跑离线验收；不能把当前64通过记成完整迁移验收或实网模型验证。
+
+### 2026-10-25：异步迁移首次验收，两个问题待学习者修正（历史记录）
+
+- 实际源码确认Service异步定义、AsyncClient、await post、超时、JSON异常类型，以及异步路由await Service和httpx依赖均已修改。阻断问题：Service仍捕获requests.HTTPError而非httpx.HTTPError；演示入口main仍普通def且调用Service未await。
+- 导师适配tests/test_deepseek_demo.py和tests/test_ai_routes.py：异步请求/生成用AsyncMock，响应解析仍Mock；通过asyncio.run运行测试协程；模拟AsyncClient上下文，核对超时及退出清理。新增tests/test_llm_demo_entrypoint.py用模拟生成函数离线执行脚本入口，避免调用真实模型。
+- 实际执行python -B -m pytest --noconftest -p no:cacheprovider tests/test_deepseek_demo.py tests/test_ai_routes.py tests/test_llm_demo_entrypoint.py -q --tb=short：4 failed, 61 passed in 2.62s。失败为ReadTimeout、ConnectError、HTTPStatusError未转换的3例，以及演示读取协程.title的1例；不是完整数据库回归，无真实模型或数据库操作。
+- 下一步学习者将捕获类型改为httpx.HTTPError并移除Service不再使用的requests导入；演示改async def main、await generate_candidate，并建议main置于入口判断之前，入口只调用asyncio.run(main())。导师未代改业务代码。修正后重跑这3个文件，再推进。
+- 自最近归档累计推进3轮；未提交推送，保留学习者暂存状态。
+
+### 2026-10-25：调用链设计已纠正，布置HTTPX异步迁移（历史记录）
+
+- 学习者正确提出异步路由await Service，但最初仍写await requests.post；已结合AsyncClient实验纠正为await client.post。演示脚本入口明确为asyncio.run(main())，main内await Service。
+- 本轮补讲httpx.Timeout(20.0, connect=10.0)：连接10秒，读/写/连接池等待20秒，为阶段限制而非总时限；配置对象不发送请求。讲httpx.HTTPError覆盖请求错误及状态错误，外层response.json使用标准json.JSONDecodeError；保留原RuntimeError转换与异常链。
+- 布置学习者修改llm_service.py、ai_routes.py、examples/llm/deepseek_demo.py及requirements.txt（补httpx==0.28.1，保留现有依赖）。Service以局部async with管理客户端，请求及raise_for_status保持在HTTPError捕获范围，后续解析校验不加await。当前以每次调用管理客户端为教学起点，跨请求连接池复用后续再学。
+- 下一次导师静态验收整个调用链，适配已有同步Mock及测试调用方式并运行隔离回归；当前旧测试仍针对requests，不把迁移期失败当作最终业务结论。无需先运行真实付费演示。尚未修改业务或测试，无本轮测试结果。
+- 自最近归档累计推进2轮（设计反馈与本轮任务）；未提交推送。
+
+### 2026-10-25：真实异步HTTP流程通过，开始规划模型调用链迁移（历史记录）
+
+- 导师读取并实际运行python -B -m examples.async_http_demo，退出0、状态200并输出HTML。await client.get、async with及普通状态检查正确；打印完整response.text而非要求的前80字符，告知局部修正，不因此重复要求整轮验收。未调用模型或数据库，未重跑AI测试。
+- 本轮讲GET到POST的数据传递区别：client.post的url、headers、json沿用现有业务输入，await得到Response后仍普通解析；介绍Service、路由及独立演示脚本三个调用位置的迁移关系，暂不代写业务代码。
+- 下一小步先让学习者说明Service、路由、演示入口各自的async/await及run安排，再讲HTTPX超时、异常映射并布置完整小范围迁移；尚未改造任何模型调用或测试。正式使用时需补httpx直接依赖，旧requests异常及同步Mock也需要相应调整。
+- 达到4轮节点，已将AsyncClient生命周期、真实请求与响应处理知识合并归档；最近归档点为本轮，累计推进归零。未提交或推送，保留已有暂存状态。
+
+### 2026-10-25：跳过顺序实验，开始AsyncClient独立请求练习（历史记录）
+
+- 用户明确要求跳过顺序await实验，保留已有gather版本，不再要求补验；用户能说明仅改async def不会令requests.post非阻塞。已解释应使用异步HTTP客户端及配套await调用链，普通解析不必await。
+- 本轮核对现有虚拟环境：httpx 0.28.1可导入且提供AsyncClient，httpx2另有独立模块；requirements.txt仅声明httpx2==2.13.1，不把两个包视作同一个。独立本机实验先使用已安装httpx，不安装或修改依赖；正式引入业务前须明确并记录httpx依赖，不能假定干净环境已具备。
+- 新知识：AsyncClient负责异步请求与连接管理；async with进入/退出管理客户端生命周期；await client.get取得Response，raise_for_status及text/status_code无需await。先解释方法、超时和异常，再提供examples/async_http_demo.py局部骨架，由学习者补充GET https://example.com/、状态检查和打印状态码及正文前80字符。
+- 预期正常响应200和HTML文本；这是公共网页而非JSON，不调用json()。此实验只说明真实异步HTTP流程，不以一次请求证明并发性能。导师本轮仅核对导入与签名、查官方文档，无真实HTTP实验请求、测试或业务修改。
+- 下一次验收用户文件及输出，关注async with退出释放连接，以及普通Response处理为何不需要await。自最近归档累计推进3轮（含异步HTTP调用链两轮讲解）；未提交推送。
+
+### 2026-10-25：协程与返回值理解通过，顺序实验尚未反映到磁盘文件（历史记录）
+
+- 用户正确区分request_a为协程对象、result_a为执行返回值。补讲await后布置main依次等待A并打印，再等待B并打印；本轮用户报告完成。
+- 实际读取examples/async_demo.py仍为gather版本，运行python -B -m examples.async_demo退出0，输出A begin、B begin、B end、A end、['A', 'B']。这是并发版本的实际验证，不能作为顺序版本验收通过；可能未保存或编辑了其他文件，原因尚未确认。
+- 下一步学习者检查文件路径并保存main的顺序await实现，预期A begin、A end、A、B begin、B end、B；导师不代改实验代码，不推进至新的API。
+- 达到增量整理节点，已合并协程对象、await、gather、sleep及run基础。最近归档点更新为本轮，累计推进归零。未运行AI回归、调用模型、操作数据库或提交推送，保留暂存区修改。
+
+### 2026-10-25：并发等待实验静态核对通过，安排连续await对照（历史记录）
+
+- 用户反馈实验输出符合预期；导师读取examples/async_demo.py确认先打印begin、await asyncio.sleep(delay)、打印end并return name，main通过gather安排A/3秒及B/1秒。当前返回值是name，因此结果列表为['A', 'B']，与示例的描述性字符串不同但符合实验目的。导师本轮未重跑，耗时与顺序依据用户反馈及代码分析。
+- 下一小步学习者只修改main：依次await simulate_request('A', 3)、await simulate_request('B', 1)，保存返回值并打印列表。预期A begin→A end→B begin→B end，等待约4秒；解释await不自动把尚未安排的B启动，顺序等待不等于阻塞事件循环。
+- 保留simulate_request不变，不引入新库或修改业务API。完成对照后确认为什么两次等待不能重叠；不要据此误推已提前调度的Task连续await也必然串行。
+- 自最近归档累计推进2轮。未执行测试、模型请求、数据库操作或Git提交推送；保留学习者现有暂存状态。
+
+### 2026-10-25：异步等待顺序理解通过，安排asyncio最小实验（历史记录）
+
+- 学习者正确回答A仍需等待模型响应后才能解析。继续介绍协程对象、asyncio.sleep、asyncio.run及gather的最小调用方式，以不联网的等待模拟观察并发。
+- 本轮布置examples/async_demo.py骨架：学习者补充simulate_request内开始打印、await asyncio.sleep(delay)、结束打印及字符串返回。main用gather组织A等待3秒、B等待1秒并打印结果；先解释调用返回协程对象、gather调度和结果顺序、run生命周期，再动手。
+- 预期B先结束、A后结束，结果列表仍按A/B入参顺序。后续对照直接连续await两次会顺序执行；当前尚未运行或验收实验，不将预期写成实测。无需改业务API、安装依赖或调用模型。
+- 自2026-10-25最近归档累计推进1轮。本轮仅维护进度，无测试、提交或推送；下一次检查学习者实验源码及输出，再解释顺序await与并发调度的区别。
+
+### 2026-10-25：同步执行链已理解并归档，推进异步等待原理（历史记录）
+
+- 用户正确说明B可在A等待模型时由另一线程先完成查询；补讲路由调用Service不自动换线程后，用户反馈理解并要求归档。已检索知识文档并合并同步调用、线程池、函数执行链及容量边界。
+- 本轮新导学为事件循环与异步等待：同一线程可在任务等待期间执行其他就绪任务，但当前任务仍须等结果再解析。强调只改async def并继续直接调用requests.post不会自动非阻塞；当前普通def方案保留，无业务修改。
+- 下一次先确认能解释“异步等待期间当前任务暂停，但其他任务可以运行”，再安排最小示例学习async/await；尚未实现异步HTTP调用，不标记已掌握异步编程。
+- 最近归档点为本轮用户明确要求整理，累计推进重置为0。本轮未测试、调用模型、操作数据库或提交推送。
+
+### 2026-10-24：输出预算验收通过，开始同步等待导学（历史记录）
+
+- 已核对学习者在请求payload配置max_tokens=2048，移除临时usage取值与打印，保留候选返回及结束原因拒绝逻辑。导师新增请求实参断言，确认实际交给requests.post的payload包含该预算。
+- 本轮实际执行python -B -m pytest --noconftest -p no:cacheprovider tests/test_deepseek_demo.py tests/test_ai_routes.py -q，64 passed in 0.80s。仅离线Mock验证，无真实模型请求或数据库操作；未验证2048预算下真实调用的完成率。
+- 下一小步结合requests.post和普通def路由讲解同步等待、阻塞当前执行线程与整个API停止的区别。FastAPI将普通def路由放在线程池执行，直接调用的Service继续在该线程运行；不直接要求改成async def或引入新HTTP库。下一次先确认对同一请求执行顺序、其他请求能否继续的理解。
+- 已将知识文档中的预算计划更新为已配置事实。最近系统归档点为上一轮结束原因验收，自该点累计推进1轮；同步与并发的新讲解在后续归档时合并。未修改业务代码、提交或推送。
+
+### 2026-10-24：结束原因校验通过，待设置输出预算并移除临时打印（历史记录）
+
+- 学习者已在结构提取try读取finish_reason，并在answer校验之前拒绝非stop，静态核对符合约定。导师给正常Mock补stop，新增7组非stop、1组截断前拒绝且json.loads未调用、1组缺字段保留KeyError原因的测试。
+- 实际执行虚拟环境python -B -m pytest --noconftest -p no:cacheprovider tests/test_deepseek_demo.py tests/test_ai_routes.py -q，64 passed in 1.00s（生成44+路由20），未调用模型或连接数据库；不是完整数据库回归。
+- 达到归档间隔，已合并真实usage数值、推理子集、max_tokens上限语义、finish_reason与HTTP/JSON/字段校验的区别及Mock更新依据。最近归档点为本轮，累计推进归零。
+- 下一小步用户在payload添加max_tokens=2048作为初始教学预算，并移除已完成观察的usage临时取值/print，保留return validated_candidate。2048不是服务能力上限、不保证完成，推理也占生成预算；后续导师验收请求实参及回归，无需先发真实请求或加入自动重试。
+- 本轮仅导师修改测试和文档，业务由学习者完成。未提交推送。
+
+### 2026-10-24：输出上限理解通过，待增加结束原因校验（历史记录）
+
+- 用户正确回答推理150包含在生成200中，以及max_tokens是上限、不会强制补足。512仅为教学示例，当前未要求设置具体输出预算。
+- 本轮核对官方finish_reason定义，说明stop为自然停止或命中stop序列，length为输出预算或上下文限制导致停止。当前单条JSON候选仅接受stop；stop仍需JSON及字段校验，非stop即使内容可解析也拒绝。
+- 下一小步学习者在已有回答结构提取try中增加choices[0]["finish_reason"]取值，保留既有结构异常转换；try/except之后、answer类型/内容校验之前，若finish_reason != "stop"则抛RuntimeError("模型回答未正常完成")。不改模型预算、返回契约或自动重试。
+- 既有Mock响应辅助函数尚无finish_reason，待用户完成后导师同步为正常模拟回答补stop并增加非stop及缺失字段测试，不把由测试数据过旧引起的失败直接判断为实现错误。无需通过真实付费调用制造截断。
+- 本轮仅查文档、读源码并记录计划，无业务修改、测试或模型请求。自最近归档累计推进3轮，下轮检查增量归档。
+
+### 2026-10-24：真实usage观察成功，区分生成总量与推理用量（历史记录）
+
+- 用户运行演示模块的截图显示prompt_tokens=186、completion_tokens=141、total_tokens=327，completion_tokens_details.reasoning_tokens=116；缓存命中0、未命中186。候选正常返回学习SQLAlchemy/high/python/重点理解Session。此为用户实际调用证据，导师未重发请求。
+- 本轮讲解186+141=327；reasoning_tokens为生成用量的细分项，不再额外加到总量。141-116=25为本次非推理生成Token用量，不能按字符或候选打印字典长度理解。只看最终回答会低估总生成用量。
+- 临时usage打印仍保留用于教学，未变更返回TaskCandidate的契约。下一小步介绍输出Token上限与截断风险，先解释再设置，不直接给思考模型套用过小限制。缓存只识别本次零命中，具体机制后续按需展开。
+- 未运行测试或提交推送。自最近归档累计推进2轮。
+
+### 2026-10-24：Token基础判断通过，待观察真实usage（历史记录）
+
+- 学习者正确回答字符数不能直接当作prompt_tokens，system增长可能增加输入Token。下一小步只观察用量，不改候选返回契约或接口响应模型。
+- 布置学习者在llm_service.generate_candidate所有解析和候选校验通过后、return validated_candidate之前，临时用response_data.get("usage")取值并打印。讲解字典get缺键返回None，缺失用量不等于0；此处已通过前序结构校验，避免在未确认响应结构时新增AttributeError。临时print用于教学观察，后续交付前移除或改为合适日志。
+- 用户在已配置DEEPSEEK_API_KEY的项目根目录终端运行python -m examples.llm.deepseek_demo一次，观察usage和原候选输出。无需启动Uvicorn或访问数据库。仅打印usage，不输出headers或完整响应；实际数值待反馈，导师未发送模型请求。
+- 本轮只更新进度，业务修改留给学习者，无测试或提交推送。自最近归档累计推进1轮。
+
+### 2026-10-24：上下文基础已理解，开始Token与usage导学（历史记录）
+
+- 学习者正确指出当前请求缺少上次回答；已解释当前messages仅system/user、数据库记录不会自动传给模型，以及人工修改后当前任务状态比旧回答更适合作为上下文。理解反馈已收到，未实现多轮会话或模型更新任务。
+- 本轮引入Token不等于字符、输入含system规则与user文本、usage的prompt_tokens/completion_tokens/total_tokens字段，区分应用2000字符限制、模型上下文容量及输出限制。官方文档已核对，不增加真实请求或修改业务返回契约。
+- 达到归档间隔，已将上下文及Token基础合并到get_knowledge.md阶段五，最近归档点更新为本轮，累计推进归零。下一步先确认学习者能解释2000字符不等于2000Token、system增长会影响输入用量，再安排小步观察usage；暂不引入全部模型参数或分词器依赖。
+- 本轮未执行测试、Git提交推送或数据库操作；上一轮独立操作复现与既有测试结果保持原记录。
+
+### 2026-10-23：小范围独立操作复现通过，下一小节为模型上下文与Token（历史记录）
+
+- 用户四张截图确认：候选生成200，任务为复习Python异常处理/low/python；人工改备注后POST /tasks返回201，id=777；GET /tasks/777返回200且备注“练习异常链，并区分flush与commit”一致。减少提示下完成接口选择、修改、保存、重查，记录操作复现通过，不等同独立重写代码。
+- 纯空白text返回422，错误类型string_too_short，位置body/text，min_length=1。用户正确判断在TaskCandidateRequest校验时拒绝；结合当前源码，str_strip_whitespace先去空白，再长度校验，FastAPI不会进入generate_task_candidate函数体，因此不会执行llm_service.generate_candidate。截图是HTTP结果证据，未另做本轮运行时调用跟踪。
+- 本轮只核对源码、解释结果和记录进度，未重发模型或数据库请求、未新增测试、未提交推送。自最近归档累计推进4轮，此轮为既有知识复习，无新增知识略过重复归档。
+- 下一小步开始讲模型上下文：结合现有messages中的system/user解释每次请求实际提供的信息，以及当前接口没有自动带上前次候选、人工修改或数据库任务；随后再引入Token及usage，先讲后改，不一次展开全部模型参数。
+
+### 2026-10-23：两次本地提交完成，安排小范围独立复现（历史记录）
+
+- 已核对功能2b6b21d与文档d8d8e0f完成，上一轮提交后工作区干净；未推送。本条为后续新增进度，不自动提交。
+- 本轮练习：以“低优先级复习Python异常处理，标签是Python，备注是练习try/except和raise”为输入，学习者自行选择候选接口，人工将备注修改为“练习异常链，并区分flush与commit”，确认后保存并GET核对。沿用本机学习库与8001服务，不切换测试库；若需重新启动可查README及已有命令。只生成一次、创建一次，真实结果与任务ID待反馈。
+- 额外小边界：候选接口提交纯空白text，预期422；对照源码说明在TaskCandidateRequest请求校验处停止，未调用生成函数。这是既有行为复现，不增加新代码或批量测试。
+- 采用减少提示的小范围练习，观察学习者能否自行组织流程；不据布置任务标记独立掌握。完成后进入模型上下文与Token等下一小节，独立代码重建仍留待间隔练习。
+- 本轮只核对文件并记录计划，未运行服务、模型或数据库操作。自最近知识归档累计推进3轮。
+
+### 2026-10-23：已授权本地提交，功能提交完成，学习记录随第二次提交归档（历史记录）
 
 - 用户明确回复“执行吧”，授权先前列明的两次本地提交，不包含远程推送。
 - 功能提交已完成：2b6b21d，feat: add AI task candidate generation；包含正式模块、路由挂载、演示入口、两个AI测试文件及README，共10个文件。提交前已将原空暂存快照更新为当前完整代码，并纳入未跟踪测试文件。

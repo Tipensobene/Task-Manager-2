@@ -4,6 +4,28 @@
 
 ### 从自然语言到候选任务：消息、格式与校验
 
+#### JSON Schema与实际校验的区别（2026-10-26）
+
+JSON只规定数据格式，JSON Schema描述字段结构和约束。priority="urgent"是合法JSON中的字符串，但不满足enum=["low", "normal", "high"]。properties描述字段，required表示必须提供的字段，additionalProperties=false禁止额外字段。
+
+TaskCandidate.model_json_schema()在类上调用，默认mode="validation"，返回可JSON序列化的规则字典，不校验具体候选、不请求模型。candidate.model_dump()在实例上调用，返回该候选的数据字典；TaskCandidate.model_validate(data)才执行校验及默认值补全。只提供title可以得到priority="normal"、tags=[]、description=""；显式null不等于省略。Schema中的default是描述，Schema本身不会补值。
+
+用户实际打印Schema并正确观察到tags仅有type=array和items.type=string，没有自动描述自定义校验器的strip/lower/去重。输入[" Python ", "python", "SQL"]满足该Schema，实际Pydantic校验会规范为["python", "sql"]；["   "]也满足该Schema的元素类型要求，但会被本地校验器拒绝。生成Schema不等于完整翻译任意Python逻辑，本地校验仍需保留。
+
+json.dumps(schema, ensure_ascii=False, indent=2)将规则字典转为字符串供阅读，ensure_ascii=False保留可读中文，indent=2控制缩进。与json.loads解析字符串的方向相反。若把Schema放进system.content，应先转成字符串再与提示文本拼接；json=payload之后由HTTP客户端编码整个请求，两次序列化针对不同层级。提示词中的Schema只是提供给模型的文本约束，不是供应商严格结构化输出参数，也不保证模型完全遵守。
+
+2026-10-26已实现system提示词追加由TaskCandidate生成的Schema文本，保留业务意图说明、json_object及本地model_validate。请求内容断言从实际system.content提取并解析Schema，与模型生成的规则字典比较，不依赖JSON空格或键顺序；三个离线测试文件65 passed，用户反馈追加Schema后的真实调用符合预期。后续精简了手写类型/枚举等重复规则，字段含义及缺信息处理仍保留；最新四行文案修正已静态核对，没有为纯文字修正重复付费调用。参考：[Pydantic JSON Schema](https://docs.pydantic.dev/latest/concepts/json_schema/)。
+
+规则维护原则：结构约束主要由TaskCandidate及其生成的Schema描述，自然语言提示说明提取意图及未说明时的处理。Schema的default是注释性质的默认描述，不会自行理解用户是否表达优先级；tags的default_factory也没有自动生成default=[]。提示词中的“未说明时空列表”等策略不能机械删除。面向学习者的编辑说明（如“不再手写三个可选值”）不应复制到发给模型的system提示词中。
+
+下一步理解语义正确性：Schema/Pydantic能验证priority是否属于合法集合，但不能仅凭候选数据判断它是否忠实于用户原文。例如原文指定低优先级，候选却写high，仍可通过当前字段校验。现有model_validate只接收候选字典，未与原文比较；Mock测试证明程序处理预设回答的行为，不证明模型真实提取质量。人工确认及基于固定输入的效果检查承担不同职责，不能用HTTP200或测试全绿替代语义判断。
+
+#### 固定输入的提取效果检查（2026-10-26）
+
+先确定输入和预期，再查看输出：标题可等义改写，明确优先级须保持，未指定标签时不从标题自动补标签，未提供备注时为空字符串。四条基线覆盖完整信息、信息缺省、明确低优先级和多标签；实际候选及判断保存在examples/llm/EVALUATION.md。本轮用户截图四条均200且符合标准，记录为本轮4/4通过，不外推总体准确率或提示词提升幅度。
+
+应保留首次结果，失败分为网络/状态/解析/字段校验失败与语义错配，不靠反复重试隐藏失败。接口候选已经过Pydantic清理，观察到小写标签不证明模型原始输出就是小写。比较提示词版本需要固定案例和判断标准，并确认运行版本；响应截图本身不能证明服务加载的是最新代码。
+
 #### 模型上下文与Token入门（2026-10-24）
 
 上下文是本次请求交给模型的材料。当前llm_service每次只构造system规则及本次user输入，没有自动携带上一轮回答、用户修改或数据库记录。任务保存在PostgreSQL不代表模型能自动读取。用户说“把刚才那条改成高优先级”时，程序必须提供明确的目标及相关信息；如果用户已修改候选，应优先依据当前保存状态，而不是旧模型回答。提供上下文与执行数据库更新是不同职责。

@@ -66,6 +66,16 @@ def test_generation_forwards_input_and_returns_candidate(mock_post, mock_client)
     assert payload["messages"][1]["content"] == "Read docs"
     assert payload["response_format"] == {"type": "json_object"}
     assert payload["max_tokens"] == 2048
+    system_message = payload["messages"][0]
+    assert system_message["role"] == "system"
+    instructions, separator, schema_text = system_message["content"].partition(
+        "候选任务应符合以下JSON Schema："
+    )
+    assert separator
+    assert "提取一条候选任务" in instructions
+    # 检查实际发送的规则，不依赖缩进、空格或JSON键排列顺序。
+    sent_schema = json.loads(schema_text)
+    assert sent_schema == llm_service.TaskCandidate.model_json_schema()
     response.raise_for_status.assert_called_once_with()
 
 

@@ -30,6 +30,11 @@ async def generate_candidate(
         "Authorization": f"Bearer {api_key}"
     }
 
+    schema_text = json.dumps(
+        TaskCandidate.model_json_schema(),
+        ensure_ascii=False,
+    )
+
     payload = {
         "model": "deepseek-flash",
         "messages": [
@@ -40,15 +45,18 @@ async def generate_candidate(
         只返回一个JSON对象，不要使用Markdown代码块，不要添加解释。
 
         字段规则：
-        title：任务标题，字符串。
-        priority：只能是low、normal、high，未说明时使用normal。
-        tags：字符串列表，未说明时使用空列表。
-        description：备注字符串，未说明时使用空字符串。
-        不要生成id、done或created_at。
+        title：从用户输入中提取任务标题。
+        priority：根据用户表达确定优先级，未说明时使用normal。
+        tags：提取用户提供的标签，未说明时使用空列表.
+        description：提取用户提供的备注，未说明时使用空字符串
 
         输出格式示例：
         {"title":"阅读文档","priority":"normal","tags":[],"description":""}
-        """,
+        """
+        +
+        "\n候选任务应符合以下JSON Schema：\n"
+        +
+        schema_text,
             },
             {
                 "role": "user",

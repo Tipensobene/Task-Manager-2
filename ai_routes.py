@@ -29,17 +29,17 @@ ai_router = APIRouter(
     "/task-candidate",
     response_model=TaskCandidate,
 )
-def generate_task_candidate(
+async def generate_task_candidate(
         request: TaskCandidateRequest
 ) -> TaskCandidate:
 
     try:
-        candidate = llm_service.generate_candidate(request.text)
+        candidate =await llm_service.generate_candidate(request.text)
     except RuntimeError as error:
         raise HTTPException(
             status_code=502,
             detail="候选任务生成失败，请稍后重试",
 
         ) from error
-    
+
     return candidate

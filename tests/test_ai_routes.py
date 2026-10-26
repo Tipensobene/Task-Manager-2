@@ -1,6 +1,7 @@
 """候选输入与路由测试：使用独立应用和模拟生成函数，无外部网络或数据库操作。"""
 
-from unittest.mock import Mock
+import asyncio
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -14,7 +15,7 @@ from task_candidate import TaskCandidate
 
 @pytest.fixture
 def mock_generate(monkeypatch):
-    generator = Mock()
+    generator = AsyncMock()
     # 替换路由实际调用的生成函数；HTTP测试不会进入真实模型请求。
     monkeypatch.setattr(ai_routes.llm_service, "generate_candidate", generator)
     return generator
@@ -69,7 +70,7 @@ def test_candidate_route_returns_candidate(ai_client, mock_generate):
 
     assert response.status_code == 200
     assert response.json() == expected
-    mock_generate.assert_called_once_with("学习Python")
+    mock_generate.assert_awaited_once_with("学习Python")
 
 
 @pytest.mark.parametrize("data", [
@@ -100,7 +101,7 @@ def test_candidate_route_converts_generation_failure(ai_client, mock_generate):
     assert response.status_code == 502
     assert response.json() == {"detail": "候选任务生成失败，请稍后重试"}
     assert str(original) not in response.text
-    mock_generate.assert_called_once_with("学习Python")
+    mock_generate.assert_awaited_once_with("学习Python")
 
 
 def test_candidate_route_preserves_generation_failure_cause(mock_generate):
@@ -111,9 +112,9 @@ def test_candidate_route_preserves_generation_failure_cause(mock_generate):
     # 直接调用路由函数，在FastAPI处理异常之前捕获Python异常对象。
     # HTTP响应JSON不包含__cause__，因此上一项HTTP测试无法检查这条因果关系。
     with pytest.raises(HTTPException) as caught:
-        ai_routes.generate_task_candidate(request)
+        asyncio.run(ai_routes.generate_task_candidate(request))
 
     assert caught.value.status_code == 502
     assert caught.value.detail == "候选任务生成失败，请稍后重试"
     assert caught.value.__cause__ is original
-    mock_generate.assert_called_once_with("学习Python")
+    mock_generate.assert_awaited_once_with("学习Python")

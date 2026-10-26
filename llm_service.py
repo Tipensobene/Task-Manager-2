@@ -1,11 +1,11 @@
 import os
-import requests
 import json
+import httpx
 from task_candidate import TaskCandidate
 from pydantic import ValidationError
 
 
-def generate_candidate(
+async def generate_candidate(
         text: str,
 ) -> TaskCandidate:
     if not isinstance(text, str):
@@ -57,33 +57,40 @@ def generate_candidate(
         ],
         "stream": False,
         "response_format": {"type": "json_object"},
+        "max_tokens":2048,
     }
 
+    timeout = httpx.Timeout(20.0,connect = 10.0)
     try:
-        response = requests.post(
-            url,
-            headers=headers,
-            json=payload,
-            timeout=(10, 20),
+        async with httpx.AsyncClient(timeout=timeout) as client:
 
-        )
+            response = await client.post(
+                url,
+                headers=headers,
+                json=payload,
 
-        response.raise_for_status()
+            )
 
-    except requests.RequestException as error:
-        raise RuntimeError("模型服务请求失败") from error
+            response.raise_for_status()
+
+    except httpx.HTTPError as error:
+            raise RuntimeError("模型服务请求失败") from error
 
     try:
         response_data = response.json()
 
-    except requests.exceptions.JSONDecodeError as error:
+    except json.JSONDecodeError as error:
         raise RuntimeError("模型服务响应不是合法JSON") from error
 
     try:
+        finish_reason = response_data["choices"][0]["finish_reason"]
         answer = response_data["choices"][0]["message"]["content"]
 
     except (KeyError, IndexError, TypeError) as error:
         raise RuntimeError("模型服务响应缺少有效回答结构") from error
+
+    if finish_reason !="stop":
+        raise RuntimeError("模型回答未正常完成")
 
     if not isinstance(answer, str):
         raise RuntimeError("answer must be a string")

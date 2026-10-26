@@ -46,10 +46,12 @@ Task Manager 4.0 是一个使用 Python、FastAPI、SQLAlchemy 和 PostgreSQL �
 
 候选输入`text`必填，去首尾空白后长度1～2000，禁止额外字段；请求校验失败返回422。模型请求、回答解析、候选校验或缺失/空白模型密钥导致的生成失败，在当前实现中统一返回502及`{"detail": "候选任务生成失败，请稍后重试"}`。标签去空白、转小写、保序去重并拒绝空标签。未实现自动重试、候选持久化或前端确认页面；当前可通过Swagger UI手动完成上述流程。
 
-离线验证候选生成与路由（替换模型请求，不使用真实密钥或数据库）：
+模型请求使用HTTPX AsyncClient，异步路由等待Service返回候选；独立演示入口由asyncio.run运行。当前每次生成创建并关闭客户端，配置连接超时10秒、读取/写入/连接池等待超时20秒（非请求总时限），输出预算max_tokens=2048，仅接受finish_reason为stop的回答并继续执行内容校验。
+
+离线验证候选生成、路由与演示入口（替换模型请求，不使用真实密钥或数据库）：
 
 ```powershell
-python -B -m pytest --noconftest -p no:cacheprovider tests/test_deepseek_demo.py tests/test_ai_routes.py -q
+python -B -m pytest --noconftest -p no:cacheprovider tests/test_deepseek_demo.py tests/test_ai_routes.py tests/test_llm_demo_entrypoint.py -q
 ```
 
 请使用已安装项目依赖的Python解释器运行。此命令不包含完整数据库回归。
@@ -63,6 +65,7 @@ python -B -m pytest --noconftest -p no:cacheprovider tests/test_deepseek_demo.py
 | Uvicorn | 运行 ASGI Web 服务器 |
 | Pydantic | 请求和响应数据校验 |
 | requests | Python HTTP 客户端示例 |
+| httpx | 模型服务的异步 HTTP 客户端 |
 | SQLAlchemy | ORM 映射、数据库查询与事务操作 |
 | PostgreSQL | 正式 Web API 的数据持久化 |
 | Alembic | 数据库结构迁移与版本管理 |

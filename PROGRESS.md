@@ -1,10 +1,208 @@
 # 学习进度与阶段路线
 
-> 更新日期：2026-10-26。Schema小节四条效果案例均通过，用户已授权本地提交，本记录随该提交归档。最近离线65 passed in 0.81s，纯文案修正未重复执行；未推送。下一步为流式响应导学，尚未实现。当前学习位置以第1节最新记录为准，后续阶段细节保留历史依据。项目使用说明见README.md，长期导师规则见AGENTS.md，详细知识笔记见get_knowledge.md。
+> 更新日期：2026-10-29。独立流式示例完成真实调用验收，依据用户截图：200、最终候选符合输入、正常退出。此前离线54/合计119项测试通过，本轮未重跑。用户已授权本地提交，本条随实验收尾提交保存，提交标识以Git日志为准；未推送。正式API仍非流式。下一步阶段五综合流程口述验收，不继续补同类边界。当前学习位置以第1节最新记录为准。
 
 ## 1. 当前继续位置
 
-### 2026-10-26：获授权提交Schema小节，下一次开始流式响应导学
+### 2026-10-29：授权本地提交，开始阶段五综合验收
+
+- 用户明确同意按已展示范围提交：三个流式示例、离线测试、讲解及项目文档，共9个文件；提交信息为Add streaming candidate demo and offline tests。此记录与实验一起保存，实际提交结果通过Git日志核对，不包含远程推送。
+- 下一小步为阶段五综合流程口述：以“低优先级复习Python异常处理，标签Python，备注练习raise”为输入，说明候选接口、人工修改确认、创建接口、数据库写入与详情查询的顺序，并判断候选生成超时是否应该重试创建接口。
+- 这是已有技术的综合应用，不新增框架、不要求再补边界、不提前认定阶段五独立掌握。完成口述后按回答安排小范围独立应用验收，再决定阶段六导学；浏览器流式输出不作为本阶段收尾前置条件。
+- 本轮未修改业务、未重新运行测试或模型调用；自最近知识归档累计推进1轮。
+
+### 2026-10-29：独立流式示例真实验收通过，待提交收尾
+
+- 用户截图显示deepseek_stream_demo收到200，最终字典为title=学习Python、priority=high、tags=[]、description=练习流式响应，符合源码输入，正常返回终端。最终打印意味着流结束条件、JSON解析与TaskCandidate校验均通过；单次成功不证明所有网络场景稳定。
+- 此前截图显示代理路径TLS握手ConnectTimeout；不带密钥的连接检查随后收到401，再次完整调用成功。原超时未复现，具体根因未确认，未修改代理、凭据或超时配置。
+- 中间片段逐行显示来自print(content)的默认换行；最终正文用空字符串join，显示换行不会被自动插入候选正文。
+- 本轮只维护文档、核对源码与Git，未重复调用模型或运行测试。当前9个待提交文件包括3个示例、测试、讲解及4个项目文档；未暂存、提交、推送。
+- 连接排查与本轮验收增量已归档，累计推进归零。下一步提交本实验逻辑变化（需明确授权），然后根据路线继续；正式API和浏览器流式输出仍未接入。
+
+### 2026-10-29：测试疑问归档为源码旁注，恢复主线
+
+- 按用户授权，在tests/test_deepseek_stream_demo.py添加中文旁注，覆盖造数据、参数化、异常消息匹配、BOM/空行、transport/handler、正文流来源、monkeypatch替换、动态error_type以及资源关闭。以mode="read"串起真实main的完整执行链，区分源码与特定场景取值。
+- 本次仅添加测试注释，语法解析与git diff --check通过；没有重跑测试、请求模型或操作数据库，54/119通过仍为历史结果。未提交推送。
+- 增量知识已合并到知识文档并指向源码详细旁注；最近归档点为本轮，累计推进归零。
+- 下一步：在已配置密钥的终端运行独立deepseek_stream_demo一次，确认完整实现的真实响应兼容与候选语义；成功后整理实验提交摘要。正式API仍非流式，不继续增加同类边界练习。
+
+### 2026-10-28：按用户要求逐行讲解流式测试文件
+
+- 用户要求先补指导规范再讲解tests/test_deepseek_stream_demo.py。已在AGENTS.md测试教学条目旁补充按真实执行流程逐行说明、参数化/fixture/替换范围/新方法/清理恢复的要求。
+- 本轮读取当前185行测试源码，讲解两条路径：内存Response直接驱动收集器，以及MockTransport配合OfflineStream运行完整main；解释参数化54案例如何产生、monkeypatch与capsys注入、异常原因检查和资源退出。未修改测试/业务或重新运行测试，54/119通过均为前次结果。
+- 当前先完成理解，不追加边界练习；后续仍为一次真实兼容验收及实验收尾，未提交推送。自最近归档累计推进2轮（含前次SSE问题解释）。
+
+### 2026-10-27：受托一次补齐流式边界并提供逐行讲解
+
+- 用户明确要求导师完成边界代码，停止逐个边界拆轮。已在独立示例中补齐约定范围，保留正式Service/API，未修改凭据、数据库或Git暂存状态。
+- 增加完整SSE数据事件组装（空行、多data行、注释、BOM、不完整末事件拒绝）、外层类型/单候选/结束原因检查、纯用量兼容、服务错误事件拒绝、结束后正文拒绝、空正文/格式/字段错误、响应媒体类型/UTF-8和应用层大小/总时限保护。未实现自动重连、重试或浏览器流输出，不将字符限制称为底层硬内存保证。
+- 新增tests/test_deepseek_stream_demo.py，54项通过；与三个既有AI测试文件合跑119 passed in 1.14s，全部隔离、不调用网络/模型/数据库。覆盖拆分字节、结构和类型错误、完成状态、校验、HTTP异常、总超时、外部取消和资源关闭；git diff --check通过。
+- 新增examples/llm/STREAM_GUIDE.md，对新增有效语句逐行说明，串起命令到最终候选的数据流；README记录运行方式及Python3.11+要求，知识文档合并最新结果。最近归档点为本轮，计数归零。
+- 下一步不再布置同类边界补丁：讲解后由用户做一次真实请求确认兼容及语义，再整理本实验提交摘要；提交仍需明确授权。本次未重复真实模型请求，不把此前真实成功当作本次新实现的验证。
+
+### 2026-10-27：content类型检查验收通过，安排外层结构类型检查
+
+- 源码在收集前拒绝非None且非str的content。实际临时离线9项PASS：None、空串、空格、普通字符串接受；0、123、False、空列表、空字典拒绝。空格样本置于标题中间，断言最终标题保留空格；错误样本不进入候选校验，所有上下文退出。无网络或数据库调用，未新增测试文件。
+- 下一步复用已学isinstance，依序检查event为dict、choices为list、choice为dict，再访问下一层；保留空choices的IndexError分类。不把整个外层错误统一吞为Exception，delta/content检查保持原有。学习者根据位置及预期自行组织，导师后续离线验收。
+- 自最近归档累计推进1轮；未改业务、提交或推送。
+
+### 2026-10-27：delta类型检查通过，归档并安排content类型边界
+
+- 源码已先检查delta为dict再调用get，重复结束原因读取已删除。临时离线empty_dict、role、null、list、string、number六项PASS：前两项正常形成候选，后四项明确拒绝且不进入候选校验；上下文均退出。未发送模型请求或修改业务。
+- 达到4轮节点，已合并JSON语法/缺键/索引/类型错误区别及实际验证范围到get_knowledge.md，归档计数归零。
+- 下一小步在content取出后、if content收集之前检查content is not None and not isinstance(content, str)，报RuntimeError("模型流式正文片段必须是字符串或null")。说明if content只检查真值，0/False/[]会被静默跳过，非零数字会进列表使join失败；不使用str强转外部错误数据。完成后离线检查合法None/空串/空格和错误类型。
+- 未新增测试文件、提交或推送；完整结构类型校验仍待后续，不记为已完成。
+
+### 2026-10-27：事件缺键/空列表验收通过，安排delta类型检查
+
+- 实际字段读取已集中在局部try并捕获KeyError/IndexError；仍残留循环下方重复current_finish_reason赋值，此轮样本不改变结果，但应删除以保持单一取值位置。
+- 临时离线normal、missing_choices、empty_choices、missing_delta、missing_finish五项PASS，错误分类及原始异常类型正确，失败不进入候选校验，响应与客户端上下文均退出。无真实请求、数据库或新增测试文件。
+- 下一步仅检查delta类型：读取delta=choice["delta"]后，用isinstance(delta, dict)拒绝None等非字典，再调用delta.get("content")。解释缺键与键存在但值类型错误不同；不要求扩大捕获所有异常。其他层级类型校验后续处理。
+- 自最近归档累计推进3轮（包含两轮理解校正与本轮验收），未改业务、提交或推送。
+
+### 2026-10-27：候选字段异常验收通过，归档异常分层
+
+- 已确认ValidationError导入及局部捕获，打印在校验成功之后。实际临时离线normal、priority、missing_title三项PASS：正常缺省字段补齐，urgent及缺title转换指定RuntimeError并保留ValidationError原因，无最终候选输出，全部上下文退出。未调用真实网络/数据库、未代改业务或新增测试文件。
+- 达到4轮归档点，已合并HTTPX请求/读取、事件JSON、正文JSON与字段校验的错误分类及验证边界到get_knowledge.md原章节；最近归档点为本轮，累计推进归零。
+- 下一步先用data: {"choices": []}检查理解：JSON解析成功，但访问choices[0]抛IndexError，不属于JSONDecodeError或ValidationError；这是外层事件结构问题。先让学习者定位失败语句，再安排局部结构校验，不直接堆叠实现。未提交推送。
+
+### 2026-10-27：最终正文JSON异常验收通过，安排候选字段错误转换
+
+- 实际代码仅在最终json.loads(answer)周围捕获JSONDecodeError。临时离线normal、bad_body、bad_event三项PASS：正常字典准确，合法事件中的非JSON正文报告模型回答错误，坏事件仍报告事件错误；两异常保留JSONDecodeError原因且不进入候选校验，上下文均退出。无真实请求、数据库操作或新增测试文件。
+- 下一小步学习者从pydantic导入ValidationError，局部捕获TaskCandidate.model_validate(data)抛出的ValidationError并转换RuntimeError("模型候选任务字段不合法") from error；print放在捕获块之后，不返回默认成功候选。用priority=urgent说明JSON合法但字段规则不合法。完成后离线验收，不要求真实模型调用。
+- 自最近归档累计推进3轮；未代改业务、提交或推送。
+
+### 2026-10-27：事件JSON错误分类验收通过，安排最终正文解析异常
+
+- 源码局部try只覆盖json.loads(event_text)，外层HTTPError保持独立。实际临时离线normal、bad_event、network三项PASS：正常候选字典正确；坏事件转换指定RuntimeError且保留JSONDecodeError原因；读取超时仍分类为网络错误；两异常不进入候选校验，三个路径上下文均退出。
+- 本轮未调用网络/模型/数据库、未新增测试文件或修改业务。下一小步只为循环外json.loads(answer)增加JSONDecodeError转换为RuntimeError("模型回答不是合法JSON") from error，区分外层事件与内层候选正文；Pydantic校验暂不改动。完成后离线验证外层合法但正文损坏的场景。
+- 自最近归档累计推进2轮；未提交推送。
+
+### 2026-10-27：HTTPX异常处理离线验收通过，安排事件JSON错误转换
+
+- 源码try已覆盖两个上下文和整个读取循环，except HTTPError转换RuntimeError并保留原因链。导师本轮临时离线normal/connect/status/read四项PASS：正常字典正确，连接失败、503状态错误和收到正文后ReadTimeout均转换为指定错误且__cause__保留原异常，未调用候选校验。客户端上下文均退出；成功进入的响应上下文均退出，进入失败不误断言__aexit__必然调用。
+- 未发送网络/模型请求、未读真实密钥或写数据库，未新增测试文件；本轮未重复此前所有结束标记用例。下一小步仅为循环内json.loads(event_text)添加局部JSONDecodeError捕获并转换RuntimeError("模型流式事件不是合法JSON") from error；最终answer解析留到后续，不用宽泛except Exception混同错误。
+- 自最近归档累计推进1轮；未改业务、提交或推送。完成后离线验证坏事件与HTTP异常分类，不要求再次真实调用。
+
+### 2026-10-27：用户确认真实候选成功，归档并安排网络异常处理
+
+- 用户反馈真实运行结果符合预期，按用户反馈记为独立流式候选路径验收通过；本轮静态核对源码，未重复调用模型或运行测试，不将反馈等同于导师取得原始响应证据。
+- 达到归档点，已合并状态覆盖、正文与推理区分、model_dump用途及离线/真实验证边界。最近归档点为本轮，累计推进归零。
+- 下一小步学习者用try覆盖两层HTTPX上下文及整个读取循环，except httpx.HTTPError as error转换为RuntimeError("模型流式请求或读取失败") from error。完成状态检查和候选解析仍放在try/except后；不捕获所有Exception、不吞掉错误或返回部分候选。后续导师离线模拟连接/状态/读取失败，暂不要求真实重试。
+- 本轮仅维护文档，未代改业务、提交或推送；当前解析错误仍可直接传播，后续再按小步处理。
+
+### 2026-10-27：状态覆盖修正离线复验通过，待真实候选验收
+
+- 实际源码已移除旧finish_reason直接赋值，保留非None更新，最终使用candidate.model_dump输出字典。
+- 本轮临时离线验证normal、missing_done、length、stop_then_null四项全部PASS，退出0；正常分支断言最终字典四字段，异常分支确认不输出最终候选，全部确认响应/客户端上下文退出。替换使用假密钥和模拟响应，未请求模型或数据库，不将此称为完整pytest套件通过。
+- 下一步学习者在已配置密钥的终端运行deepseek_stream_demo一次，检查最终候选title学习Python、priority=high、tags=[]、description练习流式响应（允许合理等义文本）；保留片段输出与最终候选的区别。此次真实收集校验尚待用户反馈，不写库，正式API未变更。
+- 自最近归档累计推进4轮（包括状态覆盖与model_dump讲解），下次归档合并本段增量；未修改业务、提交或推送。
+
+### 2026-10-27：真实流收集代码离线验收发现状态覆盖
+
+- 静态核对已接入事件解析、正文收集、上下文外完成检查及Pydantic校验；但仍保留旧的finish_reason直接赋值，随后新增的非None更新无法阻止前一行覆盖状态。最终输出仍print(candidate)，尚非计划中的model_dump字典输出。
+- 实际临时离线替换HTTPX客户端/响应及进程内假密钥，normal、missing_done、length通过；stop_then_null失败（stop后接结束原因None的模拟事件导致错误拒绝）。四条路径均确认响应和客户端上下文退出。该附加事件是状态保持边界样本，不声称真实供应商必然发送。无网络、数据库或真实密钥读取，替换结束恢复，未新增测试文件。
+- 下一步学习者移除旧的finish_reason = event["choices"][0]["finish_reason"]，只保留current_finish_reason及非None更新；按既定展示目标改为print(candidate.model_dump())，这属于输出形式差异，不是校验失败。修正后离线复验，暂不安排真实模型请求。
+- 自最近归档累计推进2轮；本轮未代改业务、提交或推送。
+
+### 2026-10-27：原始模型事件用户反馈通过，安排收集与候选校验
+
+- 静态核对独立示例已使用HTTPX POST流上下文、状态检查和aiter_lines打印；用户报告运行符合预期，导师未重发模型请求，未获得原始事件截图，不额外声称核实具体结束原因或字段。
+- 下一小步将stream_collect_demo已验证的过滤、[DONE]判断、事件解析及正文收集移入真实响应循环；循环前初始化列表和两项状态，仅收集delta.content，不混入reasoning_content。结束原因仅在非None时更新，避免后续无结束原因的事件覆盖已记录状态。
+- 两层async with退出后、仍在main内部执行流结束和stop检查，再join、json.loads、TaskCandidate.model_validate及打印最终候选。先提交代码供静态/离线验收，暂不要求重复真实调用。当前按单行data及choices[0]的协议样本处理，并非通用SSE解析器；异常先传播，不伪装成功或写库。
+- 自最近知识归档累计推进1轮。本轮只更新进度，未修改业务或运行测试、提交推送；正式API仍非流式。
+
+### 2026-10-27：模型流请求配置静态核对通过，安排原始事件观察
+
+- 实际源码含安全环境变量读取、Schema与固定任务输入、stream=True及配置打印；用户反馈重新配置密钥后输出符合预期。导师未读取环境变量值或发送模型请求，不能把非空配置记成认证成功。
+- 达到归档节点，已将role-only事件处理、脚本入口缺失复盘、网页流读取证据和请求准备边界合并get_knowledge.md；已有环境变量及asyncio.run原理不重复建章。最近归档点为本轮，累计推进归零。
+- 下一小步由学习者在deepseek_stream_demo中导入httpx，在main配置之后添加timeout和两层async with，POST携带headers/json=payload，raise_for_status后逐行print原始响应。只观察事件，不拼接候选或写库；运行将发送一次真实模型请求并可能计费。尚未实现/验收，正式接口保持非流式。
+
+### 2026-10-27：HTTPX网页流读取验收通过，准备独立模型流实验
+
+- 学习者已补模块入口asyncio.run(main())、timeout=10.0和状态码打印。导师实际执行examples.async_http_stream_demo返回200、网页HTML及退出码0；仅一次公共网页请求，无模型或数据库调用。说明客户端流式读取可读取普通HTML，不意味着响应自动成为SSE或按固定节奏到达。
+- 前次无输出原因是只定义main未调用；已解释def/async def定义均不执行函数体，无yield的async def调用创建协程，await或asyncio.run才推动执行；async不自动创建线程。此增量待下一归档点合并。
+- 下一小步学习者创建examples/llm/deepseek_stream_demo.py，仅准备请求：复用llm_service中的环境变量密钥检查、url、headers、Schema及payload，固定text，stream改True，保留max_tokens及json_object；只打印布尔配置状态，不打印密钥和headers。本轮暂不发送请求或复制原非流式解析流程，完成后再安排流读取。
+- 自最近归档累计推进3轮（含无输出排查）；未改业务文件、提交或推送，正式接口仍非流式。
+
+### 2026-10-27：缺正文事件验收通过，安排HTTPX逐行读取练习
+
+- 源码确认新增role-only事件，正文取值为delta.get("content")，结束原因仍独立读取。导师实际运行本地模块退出0，输出两段正文和学习Python/normal/[]/空备注候选，无KeyError；未调用模型或数据库。
+- 下一小步学习者新建examples/async_http_stream_demo.py，参考已有async_http_demo.py，将普通get改为async with client.stream("GET", "https://example.com/")，上下文内检查状态并以response.aiter_lines逐行打印。保留timeout=10.0及asyncio.run入口；不给完整实现，按已学接口组织。
+- 该网址响应为普通网页，实验只验证客户端流读取和上下文结构，不解析SSE、不调用json.loads、不期待逐字或固定间隔到达；可能只有少量长行。待用户实现后验收，再转向模型流请求准备。
+- 自最近归档累计推进1轮。本轮未改业务、提交或推送，未运行新网络实验。
+
+### 2026-10-27：归档SSE与异步上下文知识，准备补正文可选字段
+
+- 按用户要求立即合并自上次归档以来的取值错误复盘、空行过滤与验收、SSE身份、两端stream职责、HTTPX逐行读取和资源生命周期、协程与异步生成器及装饰器对返回类型的影响；没有新增重复章节解释既有JSON解析知识。
+- 最近知识归档点为本轮，累计推进归零。本轮仅文档维护，未执行测试或调用模型，既有验证仍为此前记录；正式llm_service仍stream=False。
+- 下一小步在本地样本增加delta只有role、没有content的事件，解释用delta.get("content")获得None并由if content跳过，保留choices/delta等必要结构的严格索引。学习者只改正文取值并新增样本，完成后验收，不直接迁移正式接口。
+
+### 2026-10-27：空行过滤验收通过，开始HTTPX流读取导学
+
+- 实际源码在移除前缀前使用startswith检查和continue，并在两条正文事件之间插入空字符串。导师执行本地模块退出0，仍输出两段正文及学习Python/normal/[]/空备注候选。本轮没有重跑上轮异常分支或调用网络模型。
+- 下一小步只讲HTTPX的async with client.stream、response.aiter_lines及资源生命周期：前者进入流式响应上下文，后者逐行提供str，退出上下文关闭响应；payload的stream=True控制服务端响应方式，HTTPX stream控制客户端读取方式。对照已学模拟生成器，不立即要求改正式接口或发送模型请求。
+- 待确认学习者理解两种stream设置各自职责后，再安排独立网络实验及响应差异处理；当前解析器仍只适用于简化单行data事件。自最近归档累计推进3轮，未修改业务、提交或推送。
+
+### 2026-10-27：本地事件收集三分支验证通过
+
+- 学习者已移除多余event["data"]层，源码与预设事件结构一致；用户反馈正常运行符合预期。
+- 导师实际临时离线验证normal、missing_done、length三项全部PASS，退出0：正常候选四字段准确；两个异常场景仅输出两段正文，抛出对应RuntimeError而不输出最终候选。通过patch临时替换chunks，结束恢复；无模型或数据库调用，未新增测试文件、未修改业务代码。
+- 下一小步：为单行data事件教学循环添加空行/非data行过滤，先使用line.startswith("data:")判断，不符合则continue，再移除前缀。解释startswith返回bool，continue只跳过当前行而break停止整个循环；在本地chunks插入空字符串验证不影响结果。这不是完整多行SSE解析器。
+- 自最近归档累计推进2轮（取值错误排查及本轮验收）；未提交推送。后续再讲HTTPX网络流资源管理，正式接口仍非流式。
+
+### 2026-10-27：事件取值练习通过，归档并安排本地串联
+
+- 学习者在对话中已正确写出先判断[DONE]、普通事件json.loads、按choices[0]提取content和finish_reason；纠正了固定赋值和重复去前缀代替JSON解析的混淆。尚未将这些代码写入文件验收，实际源码仍为None模拟版本。
+- 已将自上次归档以来完成标记、break/continue、SSE事件包装、两层JSON、字符串方法、字段读取及空正文处理合并至get_knowledge.md原流式章节；最近归档点为本轮，累计推进归零。
+- 下一步学习者在原stream_collect_demo.py中把预设片段换为4条单行data事件，生成器只yield这些行、去掉额外yield None；main初始化stream_ended和finish_reason，串联已练习的取值和收集，循环后分别检查[DONE]与stop，再沿用join/解析/校验。本轮提供样本与局部检查代码，不代写业务。
+- 本轮仅文档维护与静态核对，无测试、模型调用、提交或推送；预期正常样本生成学习Python候选。异常分支待正常路径实现后再验收；本地样本不是通用SSE解析器。
+
+### 2026-10-27：从本地完成标记转向真实流式事件
+
+- 核对源码仍为None标记加break的已验收版本；本轮不重复测试、不修改业务代码、不调用模型。
+- 依据DeepSeek官方Chat Completions文档，介绍SSE的data事件、delta.content正文增量、finish_reason结束原因及data: [DONE]流结束标记。用两个正文事件拼成一条最小任务JSON，区分每个事件的外层JSON和拼接后的候选JSON。
+- 本地None只是自定义协议，真实[DONE]不能单独证明候选生成成功；当前候选场景仍需检查finish_reason为stop，再解析完整正文并执行TaskCandidate校验。length表示达到生成长度限制，不能按成功候选接受。
+- 下一步先确认学习者能判断“length后收到[DONE]是否成功”，再安排本地事件解析小实验；尚未开始HTTPX真实流读取。自最近归档累计推进3轮，下一轮达到归档节点时合并增量知识。
+
+### 2026-10-26：完成标记验收通过，澄清break与continue
+
+- 学习者在收到None后completed=True并break；当前None定义为最后的终止标记，此写法可接受，不要求机械改回continue。continue会继续索取下一项使当前生成器自然结束；break直接离开消费循环，不保证立即关闭生成器，真实资源清理应由async with等明确负责。
+- 本轮实际执行临时离线验证：真实main正常打印3片段及候选；用临时替身仅提供全部JSON片段、不提供None，确认RuntimeError及只有3条片段输出，无最终候选。验证退出0；替身上下文结束恢复，无修改学习者代码或新增测试文件，无模型调用。
+- 两分支输出在工具终端存在中文显示编码乱码，但Python内部异常文本及输出行数断言通过，不将显示问题归为业务错误。
+- 下一小步以yield None之后还有普通print为例解释控制权：continue恢复生成器继续到自然结束，break不再请求下一项；不要混淆break终止循环与return退出main。讲清后再转向真实事件协议，本轮不引入额外清理类要求实现。
+- 自最近归档累计推进2轮；未提交推送。
+
+### 2026-10-26：异步片段收集核对通过，安排模拟完成标记（历史记录）
+
+- 源码确认simulate_stream用await sleep后yield片段，main用async for收集，结束后解析校验，入口asyncio.run(main())；用户反馈输出符合预期。导师本轮仅静态核对，未重新运行。
+- 下一小步采用本地约定None作为正常完成标记：生成器在for循环外最后yield None；消费方使用completed=False，收到None时置True并continue，字符串才append；循环后先检查completed，否则raise RuntimeError，再解析。None不是Python或DeepSeek内置结束协议，不会自动终止async for。
+- 让学习者先运行正常分支，再仅注释最后yield None，保留全部合法JSON片段，预期即使JSON完整仍报未正常结束且不打印候选；之后恢复标记。展示迭代结束、JSON合法、业务成功三者不同；显式异常传播会直接打断流程，未要求吞异常。
+- 此为模拟传输结束但缺成功标记，不等于复现所有真实断网情况。后续需依据真实协议检查完成信号和finish_reason。自最近归档累计推进1轮；未改业务、运行测试、模型调用或提交推送。
+
+### 2026-10-26：逐段收集核对通过，介绍异步生成器（历史记录）
+
+- 源码确认普通for逐段append并打印，循环外完成join及解析校验；用户反馈输出符合预期。导师未重跑，旧注释join(chunks)可随下一次修改同步为received_chunks。
+- 达到4轮归档点，已合并流式/异步区别、两段传输、join和append及完整校验边界，最近归档点更新为本轮，累计推进归零。
+- 下一小步讲async def+yield产生异步生成器、async for等待下一片段及与普通协程的区别。提供simulate_stream局部示例，每次await asyncio.sleep(1)再yield；学习者将原收集解析逻辑移入async main，以async for消费，入口asyncio.run(main())。不使用await simulate_stream()。
+- 预期约每秒收到一段，全部结束才输出候选；这是本地延时模拟，未包含网络结束信号或中断检测。未改业务文件、运行测试、调用模型或提交推送。
+
+### 2026-10-26：片段拼接静态核对通过，安排逐段收集（历史记录）
+
+- 学习者正确判断未完成回答不能保存；已实现examples/llm/stream_collect_demo.py的join→json.loads→model_validate→model_dump，源码顺序正确，用户反馈运行符合预期。导师本轮仅静态核对，未重跑。
+- 下一步只增加普通for收集环节：received_chunks=[]，遍历chunks时append并print显示收到的片段，循环结束后join(received_chunks)，保留原解析校验。先区分接收时保存片段与结束后解析；暂不引入async for/yield或真实流协议。
+- 预期先看到3条收到片段的信息，再看到最终候选。普通for遍历预设列表不是网络流，也未验证正常结束标志；后续再补异步片段来源与中断检测。
+- 自最近知识归档累计推进3轮（含上轮join练习）；未改业务、运行测试或提交推送。
+
+### 2026-10-26：Schema已提交，开始流式响应导学（历史记录）
+
+- 已核验Schema小节提交1f9313f完成，开始本轮前工作区干净，未推送。当前源码仍stream=False、await client.post读取完整响应后解析和校验。
+- 本轮导学：目标是理解分段接收与渐进展示，而非使模型必然生成更快；区分异步调度和流式数据交付，以及模型→后端、后端→浏览器两段链路。仅改上游stream=True不会自动改变现有路由为浏览器流式输出。
+- 学习顺序：先用模拟片段练习收集与完整JSON校验，再学HTTPX流读取与DeepSeek事件结构，最后按需学习后端流式接口。先保持现有正式候选接口，独立实验；阶段成果是能逐段观察并在完成校验后得到候选，中途断开不生成成功候选、不写库。
+- 首轮先确认理解：收到半个JSON不能当作已完成候选，异步与流式是不同维度。尚未布置新API实现、运行实验或调用模型，下一次根据理解反馈开始不联网最小实验并讲所需语法。
+- 自最近知识归档累计推进1轮（提交操作不计学习推进）；本轮仅文档更新，未提交推送。
+
+### 2026-10-26：获授权提交Schema小节，下一次开始流式响应导学（历史记录）
 
 - 用户明确同意本地提交。范围为llm_service.py、tests/test_deepseek_demo.py、examples/llm/EVALUATION.md、get_knowledge.md、PROGRESS.md五个文件，提交消息feat: describe task candidates with generated JSON schema。执行后核验提交及工作区，不推送远程。
 - 验收依据保留最近离线65 passed及四条用户截图，不重复调用模型或数据库，不增加业务修改。下一次先解释非流式与流式的等待/展示差异，再区分模型到服务器和服务器到客户端两段传输；完整JSON拼接及校验之前不视为可保存候选。

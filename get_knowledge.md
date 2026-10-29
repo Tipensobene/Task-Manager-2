@@ -4,6 +4,64 @@
 
 ### 从自然语言到候选任务：消息、格式与校验
 
+#### 流式响应入门与本地收集（2026-10-26）
+
+2026-10-29真实验收与连接排查：代理路径TLS握手ConnectTimeout发生在读取SSE正文之前；HTTPX转换后的异常再由main以RuntimeError from error保留原因。未带密钥的探测收到401，证明该次收到HTTP响应，不证明密钥错误，也不证明后续连接必然稳定。用户随后完整调用收到200并输出符合输入的候选字典，完成当前实现的单次真实兼容验收；原超时原因尚未确定。print(content)会给每个片段额外显示换行，但received_chunks保存的仍是原片段，最终空字符串join不会增加这些显示换行。
+
+2026-10-29测试执行链增量已写入[原测试文件旁注](tests/test_deepseek_stream_demo.py)：Response的stream参数仅指定正文的字节来源；AsyncClient的transport指定执行请求并返回响应的组件，MockTransport实际调用保存的handler。monkeypatch替换构造入口后返回预先配置的真实客户端，并非替换整个业务流程。读取异常先触发响应与客户端上下文清理，再由main转换异常，pytest.raises捕获后继续外层测试断言；connect场景没有返回响应，因此不要求未使用的内存流被响应关闭。旁注保留动态error_type分支，另以read场景展示每步实际数据流。此次只补注释，没有重新运行测试或调用模型。
+
+异步关注等待时能否让出执行机会，流式关注数据能否分段到达并处理。当前正式接口仍为异步非流式；模型→后端和后端→浏览器是两段传输，仅把模型stream改True不会自动让浏览器逐字显示。
+
+本地stream_collect_demo已实现遍历预设chunks、依次append到received_chunks、显示片段、循环外join→json.loads→TaskCandidate.model_validate。用户反馈运行符合预期，导师静态核对；这不是实际网络流，也未验证模型正常结束。"".join按顺序连接字符串并返回新字符串，非字符串元素会报TypeError；list.append原地修改列表，返回None。未收完整的JSON不能按最终候选处理，默认字段不能替代后续片段或结束检查。
+
+下一步引入异步生成器：async def中出现yield后，调用得到异步生成器对象，不是可直接await取得最终值的普通协程。await asyncio.sleep模拟片段等待，yield chunk交出一个值并暂停，消费方通过async for索取后续值时再从暂停处继续。普通return结束函数，yield保留执行位置；异步生成器可自然结束或裸return，不使用return携带最终结果。当前练习完整消费，无外部连接；后续网络资源仍需async with管理。参考：[Python异步生成器](https://docs.python.org/3/reference/expressions.html#asynchronous-generator-functions)。
+
+2026-10-27增量：本地生成器已经采用None作为末尾标记并通过正常/缺标记临时离线验证。None是自定义约定，不是Python或DeepSeek的内置协议。收到标记后break可退出循环，循环后的检查仍会执行；continue则继续索取下一项。break不保证立即关闭生成器或执行yield之后的普通语句，真实连接需要明确管理生命周期。
+
+真实流式事件的三个信息各有用途：delta.content是新增正文，finish_reason是生成停止原因，data: [DONE]表示事件流结束。length表示生成因长度限制而停止，不是“仍在生成”；即使流结束、正文碰巧是合法JSON，本项目也拒绝作为成功候选。成功路径需流结束、finish_reason为stop、正文JSON解析和TaskCandidate校验全部通过。协议参考：[DeepSeek Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/)。
+
+局部解析顺序：原始data行→line.removeprefix("data:").strip()得到event_text字符串→先识别[DONE]→普通事件用json.loads(event_text)得到字典event→event["choices"][0]["delta"]["content"]取正文，event["choices"][0]["finish_reason"]取结束原因。removeprefix和strip返回新字符串，不进行JSON解析、不修改原变量；removeprefix只移除匹配的开头。JSON的null解析为Python的None。固定写finish_reason=None无法读取后续stop值，应按字段取值。
+
+外层事件JSON完整，不代表content里的任务JSON已完整：先解析每个事件并收集content，再join后解析任务JSON。r前缀字符串保留反斜杠，适合本地表示包含JSON转义双引号的样本。if content在当前字符串或None范围内跳过空字符串和None，但保留空格字符串；不要对正文片段strip，否则可能破坏答案内容。读取结束原因要放在if content之外，结束事件可能没有新正文。
+
+当前教学练习只处理预设的单行data事件，假定choices和字段齐全，并非通用SSE解析器。已加入if not line.startswith("data:"): continue，跳过空行及非data行；startswith返回bool，不修改字符串。此处continue继续读取，break会提前终止整个循环。空行样本已实际运行通过；此前正常、缺[DONE]和length三分支临时离线验证全部通过。尚未实现或验证真实网络流，多行事件及真实响应字段差异仍待处理。
+
+取值错误复盘：data:是SSE前缀，移除后json.loads得到的字典顶层为choices，而不是data。event["data"]因此抛KeyError，这表示字典缺键，不是JSON解析失败。应从event["choices"][0]继续取值。
+
+#### SSE与HTTPX流读取生命周期（2026-10-27）
+
+SSE（Server-Sent Events，服务器发送事件）规定通过HTTP响应持续传递文本事件的格式；同一次响应可陆续发送多个事件，无需每条重新请求。媒体类型为text/event-stream，data:表示事件数据，空行分隔事件；一个事件可以有多条data行，数据也不必是JSON。当前模型接口把JSON放进事件数据，[DONE]是该接口的结束约定，不是所有SSE服务必须使用的标记。层次为HTTP承载响应→SSE划分事件→JSON表示事件数据。参考：[SSE标准](https://html.spec.whatwg.org/multipage/server-sent-events.html)。
+
+payload中的stream=True要求模型服务端采用流式返回；client.stream(...)控制本地HTTPX如何读取响应，不会把普通JSON转换成SSE。response.aiter_lines()无必填参数，返回提供str的异步迭代器，用async for读取；行不是网络数据包，也不必是完整事件。
+
+局部请求结构：外层async with httpx.AsyncClient(timeout=timeout) as client管理客户端；内层async with client.stream("POST", url, headers=headers, json=payload) as response管理响应；先response.raise_for_status()检查HTTP状态，再async for line in response.aiter_lines()逐行读取。headers携带认证，json传请求体。读取阶段也可能出现网络异常，因此未来异常处理应覆盖整个读取过程。退出内层上下文关闭响应，退出外层清理客户端资源；break只退出循环，在上下文内的后续语句仍可执行，离开上下文才清理。抛异常时同样执行退出清理，通常继续向外传播。参考：[HTTPX异步流式响应](https://www.python-httpx.org/async/#streaming-responses)。
+
+返回类型应依据实际类、方法定义及装饰器判断，不能凭post名称或是否联网猜测。本机AsyncClient.post源码为async def且无yield，调用产生协程对象，函数体尚未开始执行；await执行并等待协程，最终得到Response。源码的-> Response标注执行完成后的结果类型，不表示直接调用已得到响应，也不自动执行类型转换。协程对象本身也是Python对象。
+
+对比：普通未包装的async def且无yield→协程对象；async def含yield→异步生成器对象；HTTPX stream含yield并被@asynccontextmanager包装→异步上下文管理器。后者应使用async with而非直接await。async with会等待__aenter__进入、将结果赋给as后的变量，并在退出时等待__aexit__；HTTPX stream内部在try中yield response，finally中await response.aclose()。当前无需自己实现这些特殊方法或装饰器。
+
+三种语法职责：await等待一个可等待对象的执行结果；async with组织资源的异步进入和退出；async for逐项获取异步数据。示例async def get_number(): return 10，pending=get_number()得到协程，number=await pending才得到10。正式候选接口仍为非流式，本节为已讲解，非已接入网络。
+
+2026-10-27练习进展：role-only事件不含content，使用delta.get("content")得到None并由if content跳过；choices/delta等必要结构仍用直接索引，不把所有结构错误都当作空内容。正常候选实际运行通过。
+
+网页流读取实验最初只定义main而没有入口，运行模块立即结束且没有输出；补if __name__ == "__main__": asyncio.run(main())后实际返回200和HTML，退出0。def与async def的定义均不自动执行函数体；无yield的普通def调用立即执行，而无yield的async def调用先创建协程。async不自动开线程，普通脚本顶层不能直接await。网页可能只有一条长行，流读取不保证逐字或固定间隔输出，也不会将HTML转换成SSE。
+
+独立deepseek_stream_demo已准备Schema、headers及stream=True的payload，用户反馈配置输出符合预期；准备字典和打印配置尚未调用模型。此前密钥为空是在请求前由本地检查拒绝，不能据此判断密钥无效；临时环境变量及安全输入方法见本章已有配置说明。后续先观察原始SSE数据行，再接入候选收集校验，不能将HTTP200或出现[DONE]单独视为候选验收通过。
+
+2026-10-27后续验收：独立deepseek_stream_demo已将HTTPX逐行响应接到正文收集、结束检查、JSON解析和TaskCandidate校验。用户反馈真实运行符合预期；导师未重复付费调用或取得完整响应证据。当前实验仍按单行data和choices[0]处理，并非通用SSE解析器；正式API仍非流式。仅收集delta.content，reasoning_content不混入候选JSON。
+
+状态覆盖复盘：current_finish_reason读取本条事件的值，finish_reason保存已收到的非空结束原因；仅在current_finish_reason is not None时更新后者。必须移除此前无条件赋值，否则旧语句先将stop覆盖为None，后面的if跳过并不会撤销赋值。Python顺序执行，条件只控制其缩进块，不恢复历史状态。stop后接None是离线状态保持边界样本，不声称供应商必然发送。修正后临时离线normal、missing_done、length、stop_then_null四项通过，正常分支检查最终字典，异常分支不输出最终候选，均验证响应/客户端上下文退出；不是完整pytest套件结果。
+
+输出形式复习：print(candidate)显示Pydantic模型的可读表示；candidate.model_dump()返回Python字典，不修改原模型、不写数据库、不重新执行输入校验。当前默认调用包含已补齐的字段；得到的是dict而不是JSON字符串。流程为json.loads解析字符串→model_validate校验并构建模型→model_dump导出模型数据。只有完成检查及校验之后的最终候选才可供确认，途中打印的正文不是成功结果。
+
+流式异常分层（2026-10-27）：网络错误可能在连接、raise_for_status或aiter_lines等待后续数据时发生，故try必须覆盖两层HTTPX上下文与整个读取循环；HTTPError转换为“模型流式请求或读取失败”。循环内json.loads(event_text)局部捕获JSONDecodeError，提示“模型流式事件不是合法JSON”；循环外json.loads(answer)同类异常提示“模型回答不是合法JSON”。事件包装合法不代表正文是JSON，正文JSON合法也不代表字段符合规则：TaskCandidate.model_validate局部捕获ValidationError，提示“模型候选任务字段不合法”。例如urgent违反优先级枚举，缺title违反必填要求。
+
+各层使用raise RuntimeError(...) from error保留原始原因；重新抛出后不继续打印最终候选，不用默认数据掩盖失败，也不使用宽泛except Exception混同错误。独立脚本仍可显示异常栈，这不同于API路由转换HTTP错误响应。导师分轮临时离线验证连接/状态/读取异常、外层/内层JSON错误、非法优先级与缺title，均检查相关分类和资源退出；未新增仓库测试文件，不宣称完整回归。上下文只有成功进入后才由async with调用退出方法，进入响应失败时仍检查已进入客户端的清理。
+
+事件结构检查增量：合法JSON的{}在event["choices"]处抛KeyError，{"choices": []}在[0]处抛IndexError，均发生在循环内，尚未到最终json.loads(answer)。except (KeyError, IndexError)捕获任意一种，而非两者同时发生；事件字段已集中读取，重复的current_finish_reason取值已移除。键存在不等于类型正确：delta=None时取键成功，但调用.get会抛AttributeError，因此先isinstance(delta, dict)，非字典主动报“模型流式事件的delta必须是对象”，再读取可选content。局部缺键/空列表五项临时离线通过；delta空字典/role字典接受，None/列表/字符串/数字拒绝，六项临时离线通过，失败不进入候选校验且资源退出。本节只证明这些边界，其他层级类型检查尚未完整实现。
+
+2026-10-27用户明确委托一次补齐后，流式实验已整理为iter_sse_data（文本行→完整事件）、parse_stream_event（事件→正文与结束原因）、collect_candidate（收集→候选）及main（网络生命周期）。外层类型、可选正文、单候选索引、服务错误事件、结束后异常正文、空回答及资源时限统一完成。SSE按空行分帧，多条data行用换行合并，支持首行BOM及注释；纯用量事件只作兼容跳过，不能证明成功。事件/正文各64K字符、总时限120秒为本示例策略，不是平台上限或硬内存保证。新增54项可重复离线测试通过，连同现有AI测试共119 passed in 1.14s；未重发真实请求。详细逐行说明和测试流程合并在[STREAM_GUIDE.md](examples/llm/STREAM_GUIDE.md)。此前“尚未完整实现”的段落属于历史推进记录，以本段为当前状态。
+
 #### JSON Schema与实际校验的区别（2026-10-26）
 
 JSON只规定数据格式，JSON Schema描述字段结构和约束。priority="urgent"是合法JSON中的字符串，但不满足enum=["low", "normal", "high"]。properties描述字段，required表示必须提供的字段，additionalProperties=false禁止额外字段。

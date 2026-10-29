@@ -56,6 +56,24 @@ python -B -m pytest --noconftest -p no:cacheprovider tests/test_deepseek_demo.py
 
 请使用已安装项目依赖的Python解释器运行。此命令不包含完整数据库回归。
 
+### 独立流式候选示例
+
+`examples/llm/deepseek_stream_demo.py`使用SSE逐步接收正文，完整结束后校验并打印候选，不写入数据库；正式候选API仍为非流式。当前示例需要Python 3.11+（使用`asyncio.timeout`）。在配置`DEEPSEEK_API_KEY`的同一终端、项目根目录执行：
+
+```powershell
+python -m examples.llm.deepseek_stream_demo
+```
+
+执行会调用模型并产生用量。示例设置120秒总时限，单事件与累计正文各约64K字符的应用层限制；连接/读取失败、非SSE响应、事件结构错误、缺少完成标记、非stop结束、非法JSON或候选字段均拒绝。未实现自动重连或重试。仅支持单候选；字符限制不等于底层网络缓冲区的硬内存限制。
+
+离线验证（不调用模型、不访问数据库）：
+
+```powershell
+python -m pytest -q --noconftest tests/test_deepseek_stream_demo.py
+```
+
+执行流程及新增代码逐行说明见[流式示例讲解](examples/llm/STREAM_GUIDE.md)。
+
 ### 依赖与用途
 
 | 技术 | 用途 |

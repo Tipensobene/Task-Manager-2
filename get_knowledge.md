@@ -1,5 +1,98 @@
 # 学习问题与知识沉淀
 
+## 阶段六：个人资料检索与回答（2026-10-29起）
+
+### 文档向量缓存写入与复用（2026-10-30）
+
+缓存保存可复用的计算结果，不能只看文件存在：旧正文与旧向量一起读会回答过时资料；新正文配旧向量则可能导致检索内容与呈现内容错配。当前小文件保存model、dimensions、source、source_text、candidates，比较原文/来源/模型/维度后决定复用；分块策略变化也应重建。source_text完整原文方案便于理解但有重复存储，尚未引入内容摘要。
+
+当前semantic_search_demo在文档向量生成之后用open(..., "w", encoding="utf-8")和json.dump(..., ensure_ascii=False, indent=2)写入notes_vectors.json。w会创建或覆盖，with负责关闭；JSON可保存浮点数列表，不能保存密钥。临时目录和模拟1024维向量的验收确认写入后可读取、原文/来源/行号/向量正确，没有写项目缓存或请求模型。
+
+读取流程：Path.exists()判断文件是否存在，存在才用Path.open("r", encoding="utf-8")取得文件对象，再由json.load(file)解析为Python字典。四项比较通过时直接复用candidates；未命中才计算文档向量并写入。问题向量在分支之外计算，因此换问题不需要重建文档向量，但每次仍需计算问题向量及调用回答模型。当前未处理损坏JSON、缺键或候选内部结构错误，文件存在不代表内容一定可用。
+
+验证证据：此前离线模拟确认两条笔记首次计算3次Embedding、命中时仅1次；原文、来源、模型、维度变化均重建。用户连续运行截图确认第一次重建、第二次复用，两次排名及来源一致；截图本身不是调用计费记录。
+
+### 检索资料组织与文字生成（2026-10-30）
+
+#### 按空行分段与原始行号
+
+2026-10-31接入完成：split_paragraphs先产生带范围的候选字典，遍历候选用整段text计算向量，再通过candidate["vector"]=vector更新列表内的同一个字典。上下文及终端展示同步改用start_line/end_line。缓存增加chunking=paragraph-v1，get缺省None令旧缓存失效；规则变了即使原文相同也需重建，标识必须对应实际算法。用户真实Top-1事务问题取回1～3行完整段落，回答同时解释flush/commit；这是上下文保留的单例证据，不是普遍排名保证。离线段落版24项通过，真实效果与模拟流程验证分别记录。
+
+逐行分块可能拆散标题与解释；按空行合并段落可以一起取回相互补充的内容，但段落过大或混合主题会引入无关材料，不保证检索更准。多行块保存start_line/end_line，空行不进入正文但占原文行号。
+
+split_paragraphs的收集状态：if cleaned_line处理非空正文，if not current_lines仅在新段首行记录起点；空行分支在current_lines非空时用换行join形成字符串、保存终点line_number-1，然后清空状态。连续空行不会创建空块。list.clear()原地清空列表，返回None；此处正文已由join生成独立字符串，因此清空列表不会清掉已保存正文。不要写current_lines = current_lines.clear()。
+
+文件末尾可能没有分隔空行，需在for循环结束后检查剩余current_lines并保存最后一段，再统一return chunks。末尾保存的终点为最后处理的正文行号，不减1；空文本不进入循环，也没有剩余段落。该函数只处理字符串，未接入主流程前不会改变模型检索；后续接入需同步来源字段与缓存分块策略标识。
+
+#### 检索函数职责与命令行Top-K
+
+rank_candidates(query_vector, candidates, top_k=2)仅计算分数、降序排序并返回切片，不负责打印、文件或网络。普通def即可；返回值始终为列表，包括空结果[]，裸return则是None。main负责展示和流程控制，收到空列表后提示并提前return，避免用空资料调用生成模型。重构应保留原有行为：此次曾遗漏main的空结果保护，由离线回归发现并恢复。
+
+argparse的--top-k是可选参数，解析属性为args.top_k；type=int把字符串转换为整数，default=2处理未提供选项，choices=(1,2,3)限定当前实验范围。非法值在解析时退出2，不进入模型流程。传递链为命令行→args.top_k→main的top_k→rank_candidates的top_k→切片条数。choices只约束CLI输入，不会自动约束其他Python代码直接调用函数。改变K不改变文档向量，本身不要求缓存重建；更多资料可能补充证据，也可能引入噪声，不能保证答案更好。
+
+#### 多主题与组合问题的证据覆盖
+
+五条资料实验中，端口问题取回端口映射和镜像概念：后者主题相近，但不能直接证明端口配置。Top-K仅表示现有候选中排名最高的K条，不保证相关、充分或互补；分数也不是正确概率，不凭单次样本设置通用阈值。
+
+组合问题“flush会提交事务吗？另外Docker如何映射8080到80？”此次取回端口映射（资料1，原文第4行）和flush（资料2，原文第1行），回答分别引用两项证据。检查应分两层：先看检索是否覆盖每个子问题，再看回答是否正确使用对应资料。此次通过不代表其他组合问题必定通过。文档不变且配置一致时复用文档向量，但仍计算新问题向量、重新排名并生成回答。
+
+#### 首次真实RAG对照：Top-1与Top-2
+
+问题为“如何把修改正式保存到数据库？”。用户真实运行截图显示flush片段排名1、分数0.7006744461820718，commit片段排名2、分数0.5928322199325635。Top-1只传入flush，模型说明资料未提供具体提交方法；这属于答案片段未进入上下文，不是原文件无答案，也不是降序排序错误。相似度高不等于更能支持具体答案，不能由两个分数直接断言模型排名的具体原因。
+
+本轮实际源码从[:1]改成[:]（全取），当前只有两条资料，因此输出等价于Top-2；需纠正为[:2]才有最多两项的限制。截图显示排名/分数保持一致，回答说明执行commit提交事务并引用[资料2]，解释flush不提交时引用[资料1]。本次必要证据进入上下文后回答改善；这是两条资料、一个问题的小样本对照，不证明Top-K越大越好，也不证明一般检索质量达标。资料编号由本次排序后的上下文位置决定，与文件行号是不同概念。
+
+if not top_candidates只能判断没有候选，无法识别非空但不相关的资料。Top-K在资料非空时仍可能给出无关结果；下一步需用资料无法回答的问题检查模型是否明确说明证据不足。拒答不一定意味着程序失败，应区分“未检索到已有答案”和“资料确实没有答案”。
+
+top_candidates经enumerate从1编号，每项提取candidate里的source/line_number/text，构造[资料N]块；context_parts是字符串列表，"\n\n".join后context是完整参考资料字符串。资料编号按本次检索结果分配，不是原文件行号；三引号字符串会保留缩进和前后换行，当前不影响功能。来源不能写死，离线改为原文第3行已验证编号与原始行号各自正确。
+
+generate_answer(question, context)负责回答而非任务提取。system约束只依据资料、引用已有编号、证据不足时说明并将资料中的指令视为数据；user携带实际问题和context。这些提示不能保证引用真实或回答正确，后续仍需核对证据。复用DeepSeek异步HTTP流程及错误检查，但不使用json_object格式、不对content做第二次json.loads或TaskCandidate校验；HTTP响应外层仍是JSON，里面的content是要返回的普通文字。与Embedding的data[0].embedding返回数字列表相区分。
+
+本轮临时离线验证8类情形：正常文字去首尾空白返回、HTTP错误、非法外层JSON、缺少响应结构、非stop结束、content非字符串、空白回答、缺密钥；同时核对问题资料传递及客户端关闭。未调用真实生成模型；这验证传输和解析，不证明模型会遵守引用或证据不足规则。下一步把生成函数接到semantic_search_demo的context构造之后，再离线验证全链路。
+
+### 可复用向量函数与重构验收（2026-10-30）
+
+#### 列表切片与Top-K结果的类型
+
+切片格式为items[start:stop:step]。步长默认1；正步长时省略start从开头开始，省略stop到末尾；起点包含、终点不包含。例如items=["A","B","C","D"]，items[1:3]为["B","C"]，items[:1]为["A"]，items[2:]为["C","D"]，items[::2]为["A","C"]。step不能为0；本阶段使用正步长，负步长默认边界不同，后续需要时再展开。
+
+items[0]返回元素"A"，items[:1]返回列表["A"]；[:1]是最多取前一项，不是取下标1的元素。切片终点超出长度会取到已有末尾，空列表[:1]返回[]；空列表[0]抛IndexError。切片创建新列表但不深拷贝内部字典，修改内部共享对象可能影响原列表看到的内容。
+
+当前ranked_candidates是评分字典的列表。top_candidates=ranked_candidates[:1]之后仍需for item in top_candidates，item才是字典；item["candidate"]取得候选字典，再用["text"]取得正文。曾将切片结果命名item后直接用字符串键索引，实际报TypeError: list indices must be integers or slices, not str。修正为遍历后，正文、来源、原始行号与分数对应通过离线验收。
+
+2026-10-30补充验收：使用真实notes.txt读取路径，但仅模拟Embedding返回，正常两行资料共3次调用并输出第2行；空白文档得到空结果且不抛索引错误。当前空白文档仍计算一次问题向量、无输出，尚未实现提前返回提示。模拟分数1.0只证明代码流程，不证明真实模型语义效果；完整真实检索仍待运行。
+
+get_embedding(text)把调用者文本填入input，返回完整向量；main只await调用并展示维度/前5项。异步函数的list[float]注解描述await后的预期结果，不自动校验响应；return即使在async with内部也会先退出上下文再完成返回。临时离线HTTPX模拟已验证文本传递、1024项完整返回、HTTP错误传播及客户端关闭，未重复消耗额度。
+
+cosine_similarity通过zip(left, right, strict=True)对应遍历全部维度，累加点积与两边平方和，用math.sqrt求长度后相除。zip默认遇较短输入即停止；strict=True在发现长度不一致时抛ValueError。空向量和零向量长度为0，主动拒绝避免除零。临时验证包含二维与1024维样例；这是教学范围，不代表任意外部数值（如NaN）的全面校验。
+
+重构只替换计算步骤时，必须保留循环内scored_candidates.append。仅赋值score不会把结果自动保存到列表：曾出现函数计算正确但最终Top-2为空的情况。恢复candidate/score记录后，2026-10-30实际验证三条评分保存、降序及Top-2 B/A均通过。后续复用函数前，应把演示执行放进main并用入口保护；导入模块仍执行顶层定义，但不应自动运行演示。
+
+### 百炼接入与首次真实向量请求（2026-10-29）
+
+- 平台提供认证、接口与计费，模型负责具体计算。当前方案用百炼text-embedding-v4计算向量，DeepSeek继续生成回答；不同平台的密钥不能混用。阿里云总控制台概览不等于百炼控制台，百炼API Key也不是阿里云AccessKey。
+- 用户当时截图确认text-embedding-v4免费额度剩余1M Token、到期2027-01-28、用完即停开启。这是当时账户证据，不保证以后额度不变；现金余额与免费Token额度不同，余额为0不是防止按量计费的开关。首次调用后额度可能减少，具体余额以控制台为准。规则参考：[免费额度](https://help.aliyun.com/zh/model-studio/new-free-quota)。
+- DASHSCOPE_API_KEY用于百炼，DEEPSEEK_API_KEY用于生成。PowerShell Read-Host -AsSecureString隐藏输入，再赋给当前进程环境变量，之后启动的Python可继承；隐藏输入不意味着环境变量加密。bool(os.getenv(..., '').strip())只验证非空，不验证凭据有效；不要打印密钥或认证头。
+- 当前北京请求地址为https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings；官方亦提供业务空间专属域名。密钥与地域需对应。复用httpx.AsyncClient，不增加SDK；payload使用model、input、dimensions=1024、encoding_format="float"，而不是聊天接口的messages。await client.post才发请求并消耗额度，json=payload负责JSON编码与对应请求头，raise_for_status检查状态，response.json解析响应。
+- response_data["data"][0]["embedding"]依次取得结果列表、第一项、数字向量。这里不是聊天content中的JSON字符串，不需要第二次json.loads。len(vector)检查维度，vector[:5]只查看前5项，不能截取这5项代替完整向量进行后续检索。1024维表示1024个数，不代表1024个Token或字符。接口参考：[官方Embedding说明](https://www.alibabacloud.com/help/en/model-studio/embedding-interfaces-compatible-with-openai)。
+- 用户最新截图显示状态200、维度1024和前5个数字，结合当前源码确认单句真实调用成功；尚未完成文档/问题共同向量化、真实语义排序或RAG回答。导师未重复请求模型，具体浮点数不作为固定验收值。
+
+### 本次导入错误：局部变量不需要从其他模块导入
+
+错误的from client_demo import response会先执行client_demo.py顶层请求，访问本地/tasks/stats。连接失败时requests.get抛异常，赋值没有完成；模块捕获并打印错误后，导入方仍找不到response，于是出现ImportError。这个错误发生在百炼请求之前，不应通过启动本地服务来解决。当前response由main内的await client.post返回并赋值，是局部变量，不需要导入。
+
+from fastapi.security import api_key取得的也不是百炼密钥。实际变量命名为ali_api_key，认证头必须引用同一个变量：f"Bearer {ali_api_key}"。变量名看似相同含义不代表对象相同；不要为了消除未定义提示而导入无关同名对象。main入口保护只能阻止被保护的调用，无法阻止其他模块中未放入保护块的顶层请求。骨架中的...是占位表达式，不是本次错误原因，完成实现后可移除。
+
+手工向量实验验收：二维非零向量余弦为点积除以两向量几何长度乘积；query=[1,0]与[1,1]、[2,0]、[0,1]的分数约0.7071、1、0。循环外初始化评分列表，循环内保存candidate/score，循环后sorted(key=get_score, reverse=True)生成降序新列表，[:2]取得最多两项。key传函数对象，由sorted将记录传入函数；排序及切片不深拷贝内部字典。评分保留整个候选，item["candidate"]["text"]/source可取回对应正文和来源。2026-10-29实际运行确认Top-2为模拟B/demo-B、模拟A/demo-A，原记录顺序不变；当前是手工数字，不是模型对文字的真实语义判断。当前输出为完整列表repr，尚未按字段逐条格式化显示，但不影响数据关联。
+
+关键词到向量检索导学：字符串in只判断文字包含，当前区分大小写；用“如何把修改正式保存到数据库？”搜索“commit 提交当前事务。”会漏检。Embedding将文本表示为数字向量；问题与文档需使用兼容的模型和配置。文档内容及表示方式未变时可复用文档向量，新问题计算问题向量；仅存在变量中的向量随进程结束而丢失。余弦相似度比较方向，非零向量同向为1、正交为0，分数不是答案正确概率。Top-K仅取排名靠前的K项，不能保证存在相关证据；检索后必须保留并取回正文与来源。当前只讲解概念，尚未接入真实Embedding或实现向量检索。
+
+真实文档组织与拆分：document用source=str(file_path)、text=text将路径字符串与读取结果组织在一起；字符串转换不读取文件。document["text"].splitlines()返回行字符串列表，默认keepends=False，不保留行结束符、不修改原字符串；支持常见LF/CRLF，中间空行可以产生空字符串。当前notes.txt一行一条知识，按行拆分用于入门，不等同于通用语义分块。两行真实正文已实际运行输出；原手工chunks仍独立，真实行列表尚未转换成带来源的片段。
+
+RAG先检索与问题相关的资料，再把问题和资料交给模型生成回答；检索到内容不等于有回答依据。每个片段保存chunk_id、source、section、text，便于单独取出时仍能追溯来源。source/section属于描述正文的元数据，不是SQLAlchemy的Base.metadata对象；chunk_id当前手动填写，不是自动数据库主键。手工chunks[1]只是按位置取值，尚未实现检索。
+
+pathlib是标准库；Path("examples/rag/notes.txt")创建路径对象，不创建文件。相对路径以进程当前工作目录为起点；当前约定从项目根目录运行。read_text(encoding="utf-8")打开、解码并读完整文件，返回str且自动关闭文件；文件需事先存在并使用对应编码。缺文件会抛FileNotFoundError，若未捕获，后续片段输出不会执行。将正文赋给text不代表已有chunks字典会自动更新，必须显式把该变量用于后续数据组织。2026-10-29实际验收停在缺少notes.txt，下一步创建小文本文件并打印读取结果，尚未实现自动分块或检索。
+
 ## 阶段五：DeepSeek调用、候选校验与离线测试（2026-10-22起）
 
 ### 从自然语言到候选任务：消息、格式与校验
@@ -482,6 +575,9 @@ payload中的response_format={"type":"json_object"}约束模型回答message.con
 #### 调用环境与真实请求
 
 2026-10-23闭环导学补充：用户查看候选后可直接接受或修改title、priority、tags、description。点击“确认保存”应将最终四字段提交POST /tasks，复用既有校验、Service和Repository；不是再次调用模型。只有“重新生成”才再次调用POST /ai/task-candidate，重新生成可能改变用户刚刚修改的内容，也会再次产生模型调用。当前用Swagger手动操作两个接口，还没有实现前端确认按钮或自动保存。
+
+2026-10-29闭环验收与约束补充：用户在Swagger手动复制候选四字段、修改备注后调用POST /tasks，再通过GET /tasks/778确认修改后的备注已保存；修改尚未创建的候选不需要PATCH。TaskCreate负责请求校验，TaskService构造TaskRecord，Repository.add_task执行add/flush，创建路由commit提交后返回。客户端确认提交HTTP请求不等于数据库commit必然成功；若commit后响应丢失，再发相同创建请求仍可能产生新ID。tasks主键保证ID不重复，tags.name唯一保证标签不重名，关联表联合主键保证同一任务/标签关联不重复，都不保证任务内容或创建请求不重复。当前没有创建幂等机制；候选超时重试生成与创建请求超时的处理必须区分。
+
 
 本机8001候选接口已由用户实际执行并截图返回200，得到学习SQLAlchemy/high/[python]/重点理解Session。该结果证明这一候选调用成功，不证明数据库连通、迁移已更新或任务已保存。保存前需核对运行服务的数据库主机与名称，再以alembic current查询同一配置目标的迁移版本；current查询版本，upgrade才执行迁移，二者职责不同。
 
@@ -1218,6 +1314,12 @@ set是Python内置集合类型，set(iterable)构造不含重复元素的集合�
 enumerate(source_ids, start=0)是Python内置函数，返回迭代器，每次产生(位置编号, 元素值)，不修改原列表。测试中对[3,8,3]产生(0,3)、(1,8)、(2,3)，分别用值作旧ID、编号生成不同标题；相邻与非相邻重复ID测试据此只针对ID冲突。
 
 ### argparse命令行参数入口
+
+2026-10-30增量：RAG入口使用add_argument("question", help="要查询的问题")登记一个必填位置参数，默认接收一个字符串；question是保存结果的名字，不是命令中需要输入的固定文字。ArgumentParser负责创建对象，description说明整个程序；add_argument登记规则，help说明单个参数，返回Action配置对象；parse_args才读取并检查实际输入。Namespace是属性容器，使用args.question而不是字典下标。Shell中的引号把含空格的问题保留为一个参数，外层引号通常不进入字符串。
+
+具体流转：命令中的问题→sys.argv[1:]→Namespace(question=问题)→args.question→main(question)创建协程→asyncio.run执行协程→get_embedding(question)→generate_answer(question, context)。main内部不能保留固定question赋值，否则会覆盖输入。str类型注解本身不做转换或校验；仅有空格的参数仍能通过当前解析规则。asyncio.run等待协程完成并返回其return结果，当前main未显式return时为None；未处理的异常向外传播，不自动变成成功。
+
+本次临时离线检查以runpy执行真实模块入口，模拟argv、笔记读取和有效缓存，并替换网络函数：--help退出0、缺参退出2且不调用Embedding；两个不同问题均原样传到Embedding和回答函数。未请求网络、未覆盖项目缓存，不等同于新增仓库测试套件或真实模型效果验收。
 
 #### PowerShell启动Python工具：按执行层次读命令（2026-10-21）
 

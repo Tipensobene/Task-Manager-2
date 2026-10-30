@@ -74,6 +74,29 @@ python -m pytest -q --noconftest tests/test_deepseek_stream_demo.py
 
 执行流程及新增代码逐行说明见[流式示例讲解](examples/llm/STREAM_GUIDE.md)。
 
+### 本地笔记检索回答演示（RAG）
+
+在项目根目录、已配置`DASHSCOPE_API_KEY`及`DEEPSEEK_API_KEY`的终端运行：
+
+```powershell
+python -m examples.rag.semantic_search_demo "flush 和 commit 有什么区别？"
+python -m examples.rag.semantic_search_demo "flush 和 commit 有什么区别？" --top-k 3
+```
+
+使用已安装项目依赖的解释器。此命令调用百炼Embedding和DeepSeek回答模型，会产生用量；不需要启动任务API或连接数据库。`--help`只显示帮助，不调用模型。
+
+资料来自`examples/rag/notes.txt`，按空行分段，同段多行合并，保留来源路径与原始起止行号。文档使用text-embedding-v4的1024维向量，按余弦相似度排序，默认最多两段连同问题交给回答模型；--top-k允许选择1、2、3。回答中的资料编号对应本次上下文顺序，不是固定行号。生成回答不创建任务。
+
+首次运行写入`examples/rag/notes_vectors.json`；原文、来源、模型、维度及分块标识paragraph-v1均一致时复用文档向量，否则重建。换问题仍计算问题向量并调用回答模型。缓存含资料正文，不能把它视为无敏感内容的纯数字文件。
+
+当前是三个主题段落的小型演示：尚无相关性拒绝阈值、损坏缓存恢复或自动引用真实性校验；提示词要求资料不足时说明不足，但不保证模型永远遵守。案例记录见`examples/rag/EVALUATION.md`。
+
+可重复离线验证（临时目录和模拟服务，不需密钥或数据库）：
+
+```powershell
+python -B -m pytest --noconftest -p no:cacheprovider tests/test_rag_semantic_search.py -q
+```
+
 ### 依赖与用途
 
 | 技术 | 用途 |

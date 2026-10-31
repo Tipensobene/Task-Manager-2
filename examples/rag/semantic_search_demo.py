@@ -27,6 +27,7 @@ def split_paragraphs(text: str, source: str) -> list[dict]:
             if current_lines:
 
                 chunk={
+                    "section": current_lines[0].removesuffix("："),
                     "text":"\n".join(current_lines),
                     "source":source,
                     "start_line":start_line,
@@ -40,6 +41,7 @@ def split_paragraphs(text: str, source: str) -> list[dict]:
 
     if current_lines:
         chunk={
+            "section": current_lines[0].removesuffix("："),
             "text":"\n".join(current_lines),
             "source":source,
             "start_line":start_line,
@@ -70,7 +72,11 @@ def rank_candidates(query_vector, candidates, top_k=2):
 
     return ranked_candidates[:top_k]
 
-async def main(question: str, top_k: int = 2):
+async def main(
+        question: str,
+        top_k: int = 2,
+        section: str | None = None
+):
 
     file_path = Path("examples/rag/notes.txt")
     text = file_path.read_text(
@@ -89,7 +95,7 @@ async def main(question: str, top_k: int = 2):
                 and cache_data["dimensions"] == 1024
                 and cache_data["source"] == str(file_path)
                 and cache_data["source_text"] == text
-                and cache_data.get("chunking") == "paragraph-v1"
+                and cache_data.get("chunking") == "paragraph-section-v1"
         )
 
     if cache_valid:
@@ -111,14 +117,23 @@ async def main(question: str, top_k: int = 2):
             "source": str(file_path),
             "source_text": text,
             "candidates": candidates,
-            "chunking": "paragraph-v1",
+            "chunking": "paragraph-section-v1",
         }
         # w模式会创建或覆盖此文件；缓存只保存资料和向量，不保存密钥。
         with open("examples/rag/notes_vectors.json", "w", encoding="utf-8") as file:
             json.dump(cache_data, file, ensure_ascii=False, indent=2)
 
-    # 从这里开始，保留原来的问题向量、检索及回答代码。
+    # 缓存保留全部资料，仅在当前查询中限定主题。
+    if section is not None:
+        filtered_candidates = []
+        for candidate in candidates:
+            if candidate["section"] == section:
+                filtered_candidates.append(candidate)
+        candidates = filtered_candidates
 
+    if not candidates:
+        print("指定范围内没有可用资料。")
+        return
 
     query_vector = await get_embedding(question)
 
@@ -171,5 +186,14 @@ if __name__ == "__main__":
         choices=(1,2,3),
         help="交给回答模型的最大资料条数，默认2",
     )
+    parser.add_argument(
+        "--section",
+        help="只检索指定主题，省略时检索全部主题")
     args = parser.parse_args()
-    asyncio.run(main(args.question, top_k=args.top_k))
+    asyncio.run(
+        main(
+            args.question,
+            top_k=args.top_k,
+            section=args.section,
+        )
+    )

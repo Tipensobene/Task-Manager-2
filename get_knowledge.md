@@ -2,19 +2,59 @@
 
 ## 阶段六：个人资料检索与回答（2026-10-29起）
 
+### 完整案例回顾与接口职责（2026-10-31归档）
+
+以项目根目录执行`python -m examples.rag.semantic_search_demo "flush 和 commit 有什么区别？" --top-k 1`为例，当前主流程如下。此处汇总跨文件调用链，具体分块、缓存与排序方法见下方对应章节。
+
+| 步骤与调用位置 | 输入、实际处理与输出 |
+| --- | --- |
+| semantic_search_demo入口：ArgumentParser/add_argument/parse_args | 登记并读取问题与条数，得到args.question字符串和args.top_k整数；asyncio.run(main(...))实际执行协程 |
+| main：Path.read_text | 将notes.txt整份正文读入text；相对路径依据当前工作目录 |
+| main：Path.exists/json.load | 读取本地缓存，比较原文、来源、模型、1024维及paragraph-v1；有效则直接取得带向量的candidates，失效则走下一步 |
+| split_paragraphs(text, source) | 按空行分段，返回text/source/start_line/end_line字典列表；事务段保留1～3行完整解释 |
+| embedding_demo.get_embedding(candidate["text"]) | 用整段文字调用百炼Embedding HTTP接口，取出1024维数字列表，保存到候选字典vector字段 |
+| main：json.dump | 将候选、完整原文及表示配置保存为notes_vectors.json，进程结束后仍可复用；文件包含原文，不只是数字 |
+| get_embedding(question) | 为本次新问题计算向量；文档缓存命中也仍执行此步 |
+| rank_candidates/cosine_similarity/get_score | 本地比较问题与各段向量，保存candidate/score，按分数降序切前K条；没有网络调用；空结果由main提示并结束 |
+| main：enumerate、字符串构造及join | 将选中的正文和来源范围组织为[资料1]等文字块，拼成context；编号随本次排名变化 |
+| answer_demo.generate_answer(question, context) | 将问题及文字参考资料放入messages，调用DeepSeek回答HTTP接口；检查HTTP状态、结构、正常结束和非空文字后返回str |
+| main：print | 显示回答，并展示入选原文、路径、范围和分数，供人工核对 |
+
+百炼请求地址为`https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings`，当前源码payload指定text-embedding-v4、input、dimensions=1024、encoding_format=float。HTTPX AsyncClient.post发送请求，raise_for_status检查状态，response.json解析外层JSON，data[0].embedding才是向量。密钥来自DASHSCOPE_API_KEY环境变量。
+
+DeepSeek请求地址为`https://api.deepseek.com/chat/completions`，当前源码指定deepseek-flash、messages、stream=False、max_tokens=2048；密钥来自DEEPSEEK_API_KEY。system提供资料使用与引用约束，user携带问题和context。取回choices[0].message.content作为普通回答文字，不要求json_object，不做TaskCandidate校验。以上描述当前仓库配置，不作为平台最新模型目录或兼容性保证。
+
+两次外部接口职责不同：Embedding把文字转成可比较的数字，回答模型依据检索后的文字组织答案。余弦分数选资料，不直接生成答案；回答模型收到的是正文及来源，不是向量，也不会因这次请求自行读取本地笔记。提示词要求有据引用不等于已自动证明每句话有据。
+
+当前三个段落首次重建时按顺序请求三个文档向量、一个问题向量及一次回答；有效缓存时仅一个问题向量和一次回答。此为当前正常控制流的调用数，不是截图测得的计费记录。文档正文、来源、模型、维度或分块策略变化会重建全部文档向量；改变问题或K不要求重建文档缓存。
+
+document_demo.py是历史读取与关键词练习，不在当前主调用链。当前是CLI RAG，没有通过FastAPI任务路由、不连接PostgreSQL、不创建任务，也未使用向量数据库。离线测试验证可重复流程与参数传递，真实案例检查检索证据覆盖及回答引用；两者不能互相替代。本地提交cd6444b包含源码、样例、测试和文档，不包含生成缓存，尚未推送；本次归档发生在该提交之后。
+
 ### 文档向量缓存写入与复用（2026-10-30）
 
 缓存保存可复用的计算结果，不能只看文件存在：旧正文与旧向量一起读会回答过时资料；新正文配旧向量则可能导致检索内容与呈现内容错配。当前小文件保存model、dimensions、source、source_text、candidates，比较原文/来源/模型/维度后决定复用；分块策略变化也应重建。source_text完整原文方案便于理解但有重复存储，尚未引入内容摘要。
 
 当前semantic_search_demo在文档向量生成之后用open(..., "w", encoding="utf-8")和json.dump(..., ensure_ascii=False, indent=2)写入notes_vectors.json。w会创建或覆盖，with负责关闭；JSON可保存浮点数列表，不能保存密钥。临时目录和模拟1024维向量的验收确认写入后可读取、原文/来源/行号/向量正确，没有写项目缓存或请求模型。
 
-读取流程：Path.exists()判断文件是否存在，存在才用Path.open("r", encoding="utf-8")取得文件对象，再由json.load(file)解析为Python字典。四项比较通过时直接复用candidates；未命中才计算文档向量并写入。问题向量在分支之外计算，因此换问题不需要重建文档向量，但每次仍需计算问题向量及调用回答模型。当前未处理损坏JSON、缺键或候选内部结构错误，文件存在不代表内容一定可用。
+读取流程：Path.exists()判断文件是否存在，存在才用Path.open("r", encoding="utf-8")取得文件对象，再由json.load(file)解析为Python字典。原文、来源、模型、维度及分块标识比较通过时直接复用candidates；未命中才计算文档向量并写入。问题向量在分支之外计算，因此换问题不需要重建文档向量，但每次仍需计算问题向量及调用回答模型。当前未处理损坏JSON、缺键或候选内部结构错误，文件存在不代表内容一定可用。
 
 验证证据：此前离线模拟确认两条笔记首次计算3次Embedding、命中时仅1次；原文、来源、模型、维度变化均重建。用户连续运行截图确认第一次重建、第二次复用，两次排名及来源一致；截图本身不是调用计费记录。
 
 ### 检索资料组织与文字生成（2026-10-30）
 
+#### 部分可答与元数据范围过滤（2026-10-31）
+
+当前实现更新：过滤功能已通过此前29项离线测试及用户Docker范围真实验证，K=2仅返回5～7行一段。缓存版本已改paragraph-section-v1；取得完整候选后先过滤，再计算问题向量并排名。缓存保留全部主题，无匹配提前结束；首次缓存缺失仍先生成文档向量。下文“下一步计划”属于此前导学过程，实际状态以此更新及源码为准。
+
+P5真实案例同时询问flush与Nginx HTTPS配置：事务段有据可答，证书部分资料不足。用户运行确认回答正确说明flush不提交并引用事务段，同时拒绝给出证书配置步骤。真实存在的资料编号不保证引用有效，应检查该资料能否支持对应结论；引用Docker段说明其只有端口/镜像内容，与引用它证明证书配置不同。
+
+section是段落主题元数据，当前约定取第一行并用str.removesuffix("：")移除末尾中文冒号。该方法返回新字符串；无匹配后缀时原内容不变，不移除中间冒号。没有标题时首行仍成为标签，当前不引入通用标题解析。两处段落保存均增加section，正文仍保留标题，起止行号不变；25项离线流程/分块测试通过，未调用真实模型。
+
+元数据过滤先按用户明确指定的section缩小候选，再计算相似度和取Top-K；范围内只有一段时即使K=2也只返回一段，不从范围外补足。范围过滤不保证资料能回答问题，也不自动从自然语言识别范围。下一步计划在CLI增加--section并把值传入main，在问题向量计算前用普通循环筛选；不限定时沿用全量候选。新字段需使旧缓存失效，完成同步前不运行主流程。
+
 #### 按空行分段与原始行号
+
+分块重叠用于长段落进一步拆分时保留边界上下文。每块最多4行、重叠1行，步长为3：十行形成1～4、4～7、7～10三个块，学习者已正确推导后两块。代价包括重复向量计算/存储、重复上下文及相近块占用Top-K名额，不保证检索改善。此处仅概念学习，当前短段落算法未实现重叠。
 
 2026-10-31接入完成：split_paragraphs先产生带范围的候选字典，遍历候选用整段text计算向量，再通过candidate["vector"]=vector更新列表内的同一个字典。上下文及终端展示同步改用start_line/end_line。缓存增加chunking=paragraph-v1，get缺省None令旧缓存失效；规则变了即使原文相同也需重建，标识必须对应实际算法。用户真实Top-1事务问题取回1～3行完整段落，回答同时解释flush/commit；这是上下文保留的单例证据，不是普遍排名保证。离线段落版24项通过，真实效果与模拟流程验证分别记录。
 

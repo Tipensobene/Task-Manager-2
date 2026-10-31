@@ -22,9 +22,16 @@ from examples.rag import answer_demo, embedding_demo, semantic_search_demo as de
 def test_split_paragraphs(text, expected):
     result = demo.split_paragraphs(text, "notes.txt")
     assert result == [
-        {"text": body, "source": "notes.txt", "start_line": start, "end_line": end}
+        {"section": body.splitlines()[0].removesuffix("："), "text": body, "source": "notes.txt", "start_line": start, "end_line": end}
         for body, start, end in expected
     ]
+
+
+def test_section_uses_first_line_for_both_save_paths():
+    result = demo.split_paragraphs("Docker：\n端口说明\n\nPython 异步：\n协程说明", "notes.txt")
+    assert [item["section"] for item in result] == ["Docker", "Python 异步"]
+    assert result[0]["text"] == "Docker：\n端口说明"
+    assert (result[1]["start_line"], result[1]["end_line"]) == (4, 5)
 
 
 @pytest.fixture
@@ -62,7 +69,7 @@ def test_build_reuse_and_forward_question(workspace, services, capsys):
     data = json.loads(cache.read_text(encoding="utf-8"))
     assert data["source_text"] == notes.read_text(encoding="utf-8")
     assert [(c["start_line"], c["end_line"]) for c in data["candidates"]] == [(1, 1), (3, 4), (6, 6)]
-    assert data["chunking"] == "paragraph-v1"
+    assert data["chunking"] == "paragraph-section-v1"
     assert embedding.await_args_list[1].args == ("second\nexplanation",)
     question, context = answer.await_args.args
     assert question == "question one"
@@ -80,7 +87,7 @@ def test_build_reuse_and_forward_question(workspace, services, capsys):
     assert "复用文档向量缓存" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("changed", ["source_text", "model", "dimensions", "source", "chunking", "missing_chunking"])
+@pytest.mark.parametrize("changed", ["source_text", "model", "dimensions", "source", "chunking", "missing_chunking", "old_paragraph"])
 def test_invalid_cache_rebuilds(workspace, services, changed):
     notes, cache = workspace
     embedding, _ = services
@@ -91,6 +98,10 @@ def test_invalid_cache_rebuilds(workspace, services, changed):
         data = json.loads(cache.read_text(encoding="utf-8"))
         if changed == "missing_chunking":
             data.pop("chunking")
+        elif changed == "old_paragraph":
+            data["chunking"] = "paragraph-v1"
+            for candidate in data["candidates"]:
+                candidate.pop("section")
         else:
             data[changed] = 2 if changed == "dimensions" else "outdated"
         cache.write_text(json.dumps(data), encoding="utf-8")
@@ -157,3 +168,54 @@ def test_cli_rejects_invalid_top_k(monkeypatch, value):
     assert caught.value.code == 2
     embedding.assert_not_called()
     answer.assert_not_called()
+
+
+def test_section_filters_before_ranking_and_preserves_cache(workspace, services, monkeypatch):
+    _, cache = workspace
+    embedding, answer = services
+    # first的分数低于second；限定first后也只能选first，不能跨范围补足。
+    asyncio.run(demo.main("question", top_k=2, section="first"))
+    assert embedding.await_count == 4
+    context = answer.await_args.args[1]
+    assert "first" in context and "second" not in context and "third" not in context
+    assert context.count("[资料") == 1
+    data = json.loads(cache.read_text(encoding="utf-8"))
+    assert [item["section"] for item in data["candidates"]] == ["first", "second", "third"]
+    original = cache.read_bytes()
+    embedding.reset_mock()
+    answer.reset_mock()
+    original_rank = demo.rank_candidates
+    received_sections = []
+
+    def capture_rank(query_vector, candidates, top_k=2):
+        received_sections.extend(item["section"] for item in candidates)
+        return original_rank(query_vector, candidates, top_k)
+
+    monkeypatch.setattr(demo, "rank_candidates", capture_rank)
+    asyncio.run(demo.main("question two", section="third"))
+    assert received_sections == ["third"]
+    embedding.assert_awaited_once_with("question two")
+    assert "third" in answer.await_args.args[1]
+    assert cache.read_bytes() == original
+
+
+def test_missing_section_skips_query_and_answer(workspace, services, capsys):
+    embedding, answer = services
+    asyncio.run(demo.main("warmup"))
+    embedding.reset_mock()
+    answer.reset_mock()
+    asyncio.run(demo.main("question", section="FIRST"))
+    embedding.assert_not_called()
+    answer.assert_not_called()
+    assert "指定范围内没有可用资料。" in capsys.readouterr().out
+
+
+def test_cli_section_reaches_context(workspace, services, monkeypatch):
+    embedding, answer = services
+    monkeypatch.setattr(embedding_demo, "get_embedding", embedding)
+    monkeypatch.setattr(answer_demo, "generate_answer", answer)
+    monkeypatch.setattr(sys, "argv", ["demo", "question", "--section", "third", "--top-k", "2"])
+    runpy.run_path(demo.__file__, run_name="__main__")
+    context = answer.await_args.args[1]
+    assert "third" in context and "first" not in context and "second" not in context
+    assert context.count("[资料") == 1
